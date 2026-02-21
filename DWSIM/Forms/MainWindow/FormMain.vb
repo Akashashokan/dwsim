@@ -1429,12 +1429,8 @@ Public Class FormMain
             Try
                 Dim comp As ConstantProperties = Nothing
                 If cpath.StartsWith("//Simulate 365 Dashboard") Then
-                    Using fileStream As Stream = FileDownloadService.GetFileBySimulatePath(cpath)
-                        Using reader As New StreamReader(fileStream)
-                            Dim contents = reader.ReadToEnd()
-                            comp = Newtonsoft.Json.JsonConvert.DeserializeObject(Of BaseClasses.ConstantProperties)(contents)
-                        End Using
-                    End Using
+                    ' Simulate365 not available in this build; skip Dashboard compounds
+                    Continue For
                 Else
                     comp = Newtonsoft.Json.JsonConvert.DeserializeObject(Of BaseClasses.ConstantProperties)(File.ReadAllText(cpath))
                 End If
