@@ -66,8 +66,7 @@ public static class AcidGasRemovalDynamicTemplate
         var richAmine = sim.AddObject(ObjectType.MaterialStream, 420, 255, "Rich amine");
         var iFlashOut = sim.AddObject(ObjectType.MaterialStream, 560, 255, "I Flash out");
         var iiFlashOut = sim.AddObject(ObjectType.MaterialStream, 720, 255, "II Flash out");
-        var iiiFlashOut = sim.AddObject(ObjectType.MaterialStream, 890, 255, "III Flash out");
-        var acidicGas = sim.AddObject(ObjectType.MaterialStream, 1040, 250, "Acidic gas to compressor");
+        var acidicGas = sim.AddObject(ObjectType.MaterialStream, 890, 255, "Acidic gas to compressor");
 
         var leanAmine = sim.AddObject(ObjectType.MaterialStream, 930, 470, "LEAN AMINE");
         var leanToAbs = sim.AddObject(ObjectType.MaterialStream, 300, 300, "Input lean amine");
@@ -93,8 +92,7 @@ public static class AcidGasRemovalDynamicTemplate
         sim.ConnectObjects(iFlashOut.GraphicObject, regenerator2.GraphicObject, 0, 0);
         sim.ConnectObjects(regenerator2.GraphicObject, iiFlashOut.GraphicObject, 0, 0);
         sim.ConnectObjects(iiFlashOut.GraphicObject, regenerator3.GraphicObject, 0, 0);
-        sim.ConnectObjects(regenerator3.GraphicObject, iiiFlashOut.GraphicObject, 0, 0);
-        sim.ConnectObjects(iiiFlashOut.GraphicObject, acidicGas.GraphicObject, 0, 0);
+        sim.ConnectObjects(regenerator3.GraphicObject, acidicGas.GraphicObject, 0, 0);
 
         sim.ConnectObjects(regenerator3.GraphicObject, leanAmine.GraphicObject, 1, 0);
         sim.ConnectObjects(leanAmine.GraphicObject, leanPump.GraphicObject, 0, 0);
