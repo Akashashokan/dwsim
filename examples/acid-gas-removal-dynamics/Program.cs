@@ -20,12 +20,13 @@ class Program
         try
         {
             // Directory that contains the Python integration scripts.
-            // The EXE is built into the DWSIM output folder; the scripts live
-            // two levels up inside the source tree.
+            // The EXE is built into DWSIM\bin\x64\Debug\ (4 levels below the
+            // repo root), so we need four ".." segments to reach the root and
+            // then descend into examples\acid-gas-removal-dynamics.
             string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
             string scriptDir = Path.GetFullPath(
                 args.Length > 1 ? args[1] :
-                Path.Combine(exeDir, @"..\..\examples\acid-gas-removal-dynamics"));
+                Path.Combine(exeDir, @"..\..\..\..\examples\acid-gas-removal-dynamics"));
 
             // Absolute path for the output file.
             string outputFile = Path.GetFullPath(
