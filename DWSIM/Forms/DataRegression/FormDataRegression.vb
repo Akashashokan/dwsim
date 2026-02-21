@@ -29,7 +29,6 @@ Imports System.Threading.Tasks
 Imports System.Linq
 Imports System.IO
 Imports DWSIM.Thermodynamics.Databases.KDBLink
-Imports DWSIM.Simulate365.Models
 Imports DWSIM.Interfaces
 Imports DWSIM.SharedClassesCSharp.FilePicker
 
@@ -49,7 +48,7 @@ Public Class FormDataRegression
 
     Public currcase As RegressionCase
     Public IP As InteractionParameter
-    Public simulate365File As S365File = Nothing
+    Public simulate365File As IVirtualFile = Nothing
 
     Public proppack As PropertyPackage
     Public ppname As String = ""
