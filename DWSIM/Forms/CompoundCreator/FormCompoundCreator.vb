@@ -41,7 +41,7 @@ Public Class FormCompoundCreator
     Friend m_props As PROPS
 
     Public mycase As New CompoundGeneratorCase
-    Public simulate365File As S365File = Nothing
+    Public simulate365File As IVirtualFile = Nothing
     Public loaded As Boolean = False
     Friend PureUNIFACCompound As Boolean = True
     Friend isDWSimSaved As Boolean = True

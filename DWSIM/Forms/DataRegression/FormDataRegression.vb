@@ -48,7 +48,7 @@ Public Class FormDataRegression
 
     Public currcase As RegressionCase
     Public IP As InteractionParameter
-    Public simulate365File As S365File = Nothing
+    Public simulate365File As IVirtualFile = Nothing
 
     Public proppack As PropertyPackage
     Public ppname As String = ""
