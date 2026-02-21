@@ -69,6 +69,7 @@ public static class AcidGasRemovalDynamicTemplate
         var acidicGas = sim.AddObject(ObjectType.MaterialStream, 890, 255, "Acidic gas to compressor");
 
         var leanAmine = sim.AddObject(ObjectType.MaterialStream, 930, 470, "LEAN AMINE");
+        var pumpedLeanAmine = sim.AddObject(ObjectType.MaterialStream, 1030, 430, "Pumped lean amine");
         var leanToAbs = sim.AddObject(ObjectType.MaterialStream, 300, 300, "Input lean amine");
 
         foreach (var o in sim.SimulationObjects.Values)
@@ -96,9 +97,10 @@ public static class AcidGasRemovalDynamicTemplate
 
         sim.ConnectObjects(regenerator3.GraphicObject, leanAmine.GraphicObject, 1, 0);
         sim.ConnectObjects(leanAmine.GraphicObject, leanPump.GraphicObject, 0, 0);
-        sim.ConnectObjects(leanPump.GraphicObject, leanSaturator.GraphicObject, 0, 0);
+        sim.ConnectObjects(leanPump.GraphicObject, pumpedLeanAmine.GraphicObject, 0, 0);
+        sim.ConnectObjects(pumpedLeanAmine.GraphicObject, leanSaturator.GraphicObject, 0, 0);
         sim.ConnectObjects(leanSaturator.GraphicObject, leanToAbs.GraphicObject, 0, 0);
-        sim.ConnectObjects(leanToAbs.GraphicObject, absorber.GraphicObject, 1, 1);
+        sim.ConnectObjects(leanToAbs.GraphicObject, absorber.GraphicObject, 0, 1);
 
         // Baseline feed specs (SI). Equivalent of P/T/flow sanity check.
         ((dynamic)feed).SetTemperature(313.15);
