@@ -74,6 +74,11 @@ public static class AcidGasRemovalDynamicTemplate
         var amineRecycle = sim.AddObject(ObjectType.OT_Recycle, 1260, 420, "Amine recycle");
         var recycleToAbs = sim.AddObject(ObjectType.MaterialStream, 300, 300, "Input lean amine");
 
+        // Liquid bottoms of the two separator vessels (required — Vessel.Calculate throws if
+        // OutputConnectors(1) is unattached regardless of the liquid flow being zero).
+        var feedSepLiquid = sim.AddObject(ObjectType.MaterialStream, 210, 290, "Feed sep. water");
+        var salesSepLiquid = sim.AddObject(ObjectType.MaterialStream, 700, 220, "Sales gas condensate");
+
         foreach (var o in sim.SimulationObjects.Values)
             ((dynamic)o.GraphicObject).PositionConnectors();
 
@@ -81,13 +86,15 @@ public static class AcidGasRemovalDynamicTemplate
         sim.ConnectObjects(feed.GraphicObject, saturationMixer.GraphicObject, 0, 0);
         sim.ConnectObjects(saturationMixer.GraphicObject, saturatedFeed.GraphicObject, 0, 0);
         sim.ConnectObjects(saturatedFeed.GraphicObject, feedSeparator.GraphicObject, 0, 0);
-        sim.ConnectObjects(feedSeparator.GraphicObject, absFeed.GraphicObject, 0, 0);
+        sim.ConnectObjects(feedSeparator.GraphicObject, absFeed.GraphicObject, 0, 0);        // liquid bottom (connector 1) — must be attached or Vessel.Calculate throws
+        sim.ConnectObjects(feedSeparator.GraphicObject, feedSepLiquid.GraphicObject, 1, 0);
         sim.ConnectObjects(absFeed.GraphicObject, absorber.GraphicObject, 0, 0);
         sim.ConnectObjects(absorber.GraphicObject, hotRichGas.GraphicObject, 0, 0);
         sim.ConnectObjects(hotRichGas.GraphicObject, richCooler.GraphicObject, 0, 0);
         sim.ConnectObjects(richCooler.GraphicObject, coolRichGas.GraphicObject, 0, 0);
         sim.ConnectObjects(coolRichGas.GraphicObject, salesSeparator.GraphicObject, 0, 0);
-        sim.ConnectObjects(salesSeparator.GraphicObject, salesGas.GraphicObject, 0, 0);
+        sim.ConnectObjects(salesSeparator.GraphicObject, salesGas.GraphicObject, 0, 0);        // liquid bottom (connector 1) — must be attached or Vessel.Calculate throws
+        sim.ConnectObjects(salesSeparator.GraphicObject, salesSepLiquid.GraphicObject, 1, 0);
 
         sim.ConnectObjects(absorber.GraphicObject, richAmine.GraphicObject, 1, 0);
         sim.ConnectObjects(richAmine.GraphicObject, regenerator1.GraphicObject, 0, 0);
