@@ -70,7 +70,9 @@ public static class AcidGasRemovalDynamicTemplate
 
         var leanAmine = sim.AddObject(ObjectType.MaterialStream, 930, 470, "LEAN AMINE");
         var pumpedLeanAmine = sim.AddObject(ObjectType.MaterialStream, 1030, 430, "Pumped lean amine");
-        var leanToAbs = sim.AddObject(ObjectType.MaterialStream, 300, 300, "Input lean amine");
+        var leanToAbs = sim.AddObject(ObjectType.MaterialStream, 1160, 430, "Lean amine to recycle");
+        var amineRecycle = sim.AddObject(ObjectType.OT_Recycle, 1260, 420, "Amine recycle");
+        var recycleToAbs = sim.AddObject(ObjectType.MaterialStream, 300, 300, "Input lean amine");
 
         foreach (var o in sim.SimulationObjects.Values)
             ((dynamic)o.GraphicObject).PositionConnectors();
@@ -100,7 +102,11 @@ public static class AcidGasRemovalDynamicTemplate
         sim.ConnectObjects(leanPump.GraphicObject, pumpedLeanAmine.GraphicObject, 0, 0);
         sim.ConnectObjects(pumpedLeanAmine.GraphicObject, leanSaturator.GraphicObject, 0, 0);
         sim.ConnectObjects(leanSaturator.GraphicObject, leanToAbs.GraphicObject, 0, 0);
-        sim.ConnectObjects(leanToAbs.GraphicObject, absorber.GraphicObject, 0, 1);
+        // Recycle block breaks the lean-amine cycle so the solver can determine
+        // a finite calculation order without hitting the "Infinite loop detected" error.
+        sim.ConnectObjects(leanToAbs.GraphicObject, amineRecycle.GraphicObject, 0, 0);
+        sim.ConnectObjects(amineRecycle.GraphicObject, recycleToAbs.GraphicObject, 0, 0);
+        sim.ConnectObjects(recycleToAbs.GraphicObject, absorber.GraphicObject, 0, 1);
 
         // Baseline feed specs (SI). Equivalent of P/T/flow sanity check.
         ((dynamic)feed).SetTemperature(313.15);
