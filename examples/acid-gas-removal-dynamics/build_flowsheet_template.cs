@@ -120,6 +120,44 @@ public static class AcidGasRemovalDynamicTemplate
         ((dynamic)feed).SetPressure(3_500_000.0);
         ((dynamic)feed).SetMassFlow(2.0);
 
+        // Set wellhead gas feed composition.  Without a nonzero composition the
+        // electrolyte PH-flash Newton solver (ElectrolyteSVLE.Flash_PH) sees a
+        // degenerate enthalpy objective H(T) = 0 at every T and throws
+        // "Temperature did not converge" before any unit operation can run.
+        ApplyComposition(feed, new Dictionary<string, double>
+        {
+            ["Methane"]               = 0.850,
+            ["Carbon dioxide"]        = 0.080,
+            ["Hydrogen sulfide"]      = 0.030,
+            ["Water"]                 = 0.020,
+            ["Nitrogen"]              = 0.010,
+            ["Ethane"]                = 0.005,
+            ["Propane"]               = 0.002,
+            // Amine compounds are zero in the raw gas feed; they enter only via
+            // the lean-amine recycle loop.
+            ["Methyl diethanolamine"] = 0.000,
+            ["Monoethanolamine"]      = 0.000,
+            ["Diethanolamine"]        = 0.000,
+        });
+
+        // Seed the lean-amine recycle tear stream with a physically meaningful
+        // initial guess so the absorber solver has a valid starting point on the
+        // very first iteration (before the Recycle block has converged).
+        ((dynamic)recycleToAbs).SetTemperature(313.15);
+        ((dynamic)recycleToAbs).SetPressure(3_500_000.0);
+        ((dynamic)recycleToAbs).SetMassFlow(10.0);
+        ApplyComposition(recycleToAbs, new Dictionary<string, double>
+        {
+            ["Water"]                 = 0.700,
+            // Only the amine that was actually added to the flowsheet will match.
+            ["Methyl diethanolamine"] = 0.290,
+            ["Monoethanolamine"]      = 0.290,
+            ["Diethanolamine"]        = 0.290,
+            ["Carbon dioxide"]        = 0.005,
+            ["Hydrogen sulfide"]      = 0.003,
+            ["Methane"]               = 0.001,
+        });
+
         // Dynamic setup: one integrator + one schedule.
         sim.DynamicMode = true;
 
@@ -296,5 +334,26 @@ public static class AcidGasRemovalDynamicTemplate
             if (AddCompoundIfAvailable(sim, n)) return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Sets mole fractions on a material stream from a name→fraction dictionary.
+    /// Compounds absent from the stream are silently skipped; the surviving fractions
+    /// are re-normalised to 1 so the composition is always valid.
+    /// </summary>
+    private static void ApplyComposition(object stream, Dictionary<string, double> fracs)
+    {
+        dynamic s = stream;
+        var comps = s.Phases[0].Compounds;
+
+        double sum = 0.0;
+        foreach (var kvp in fracs)
+            if (comps.ContainsKey(kvp.Key)) sum += kvp.Value;
+
+        if (sum <= 0.0) return;
+
+        foreach (var kvp in fracs)
+            if (comps.ContainsKey(kvp.Key))
+                comps[kvp.Key].MoleFraction = kvp.Value / sum;
     }
 }
