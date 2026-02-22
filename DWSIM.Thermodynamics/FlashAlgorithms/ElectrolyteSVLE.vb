@@ -764,53 +764,30 @@ Namespace PropertyPackages.Auxiliary.FlashAlgorithms
 
             Do
 
-                ' Clamp to a physically meaningful temperature range before every
-                ' evaluation so that a run-away Newton step cannot send Flash_PT
-                ' into a region where it returns NaN phase fractions.
-                If Double.IsNaN(x1) OrElse x1 < 150.0 OrElse x1 > 950.0 Then
-                    x1 = Math.Max(150.0, Math.Min(x1, 950.0))
-                    If Double.IsNaN(x1) Then x1 = Tref
-                End If
-
                 If cnt < 2 Then
 
                     fx = Herror({x1})
-                    ' Use a 1 K finite-difference step (was 0.1 K) so that the
-                    ' derivative estimate is less sensitive to Flash_PT noise.
-                    fx2 = Herror({x1 + 1.0})
+                    fx2 = Herror({x1 + 0.1})
 
-                    dfdx = (fx2 - fx) / 1.0
+                    dfdx = (fx2 - fx) / 0.1
 
                 Else
 
                     fx2 = fx
                     fx = Herror({x1})
 
-                    If Math.Abs(x1 - x0) > 1.0E-12 Then
-                        dfdx = (fx - fx2) / (x1 - x0)
-                    Else
-                        dfdx = 1.0E-10 ' degenerate secant denominator — use tiny slope
-                    End If
+                    dfdx = (fx - fx2) / (x1 - x0)
 
                 End If
 
-                If Not Double.IsNaN(fx) AndAlso Abs(fx) <= 0.01 Then Exit Do
+                If Abs(fx) <= 0.01 Then Exit Do
 
-                If Double.IsNaN(fx) OrElse Math.Abs(dfdx) < 1.0E-20 Then
-                    ' Enthalpy objective or its derivative is degenerate at this T.
-                    ' Nudge by a fixed exploratory step rather than dividing by zero.
-                    dx = 10.0
-                Else
-                    dx = fx / dfdx
-                    ' Damp large Newton/secant steps to prevent T from leaving the
-                    ' physically valid range in a single iteration.
-                    If Math.Abs(dx) > 100.0 Then dx = Math.Sign(dx) * 100.0
-                End If
+                dx = fx / dfdx
 
                 x0 = x1
                 x1 = x1 - dx
 
-                If cnt > 100 Then
+                If Double.IsNaN(x1) Or cnt > 25 Then
                     Throw New Exception("PH Flash [Electrolyte]: Invalid result: Temperature did not converge.")
                 End If
 
@@ -897,13 +874,7 @@ Namespace PropertyPackages.Auxiliary.FlashAlgorithms
             FW0 = 0.001 * proppack.AUX_MMM(Vz) 'kg
             FW = 0.001 * sumN * mmm 'kg
 
-            ' Guard: if all phase mole fractions collapsed to zero the weighted
-            ' molecular weight denominator is zero → return NaN so the outer
-            ' Newton loop can detect the degenerate step and recover.
-            Dim phaseMM As Double = mmg * V + mml * L + mms * S
-            If phaseMM < 1.0E-20 Then Return Double.NaN
-
-            Dim herr As Double = FW0 * Hf - FW * (((mmg * V / phaseMM) * _Hv + (mml * L / phaseMM) * _Hl + (mms * S / phaseMM) * _Hs))
+            Dim herr As Double = FW0 * Hf - FW * (((mmg * V / (mmg * V + mml * L + mms * S)) * _Hv + (mml * L / (mmg * V + mml * L + mms * S)) * _Hl + (mms * S / (mmg * V + mml * L + mms * S)) * _Hs))
 
             Return herr
 
