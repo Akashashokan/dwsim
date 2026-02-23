@@ -29,13 +29,15 @@ public static class AcidGasRemovalDynamicTemplate
         AddCompoundIfAvailable(sim, "Propane");
 
         // Amine package compounds: pick one amine at minimum (prefer MDEA, then MEA, then DEA).
-        var amineAdded = AddFirstAvailableCompound(sim, new[]
+        // AddFirstAvailableCompound returns the name of the compound that was added so
+        // downstream seed compositions can target only the amine actually present.
+        var amineName = AddFirstAvailableCompound(sim, new[]
         {
             "Methyl diethanolamine",
             "Monoethanolamine",
             "Diethanolamine"
         });
-        if (!amineAdded)
+        if (amineName == null)
             throw new Exception("Could not add any amine compound (MDEA/MEA/DEA). Please verify your component database.");
 
         // Thermodynamic package selection for amine systems.
@@ -248,16 +250,15 @@ public static class AcidGasRemovalDynamicTemplate
         ((dynamic)recycleToAbs).SetTemperature(313.15);
         ((dynamic)recycleToAbs).SetPressure(3_500_000.0);
         ((dynamic)recycleToAbs).SetMassFlow(10.0);
+        // Seed with only the amine that is actually in the flowsheet.
+        // Setting all three amines simultaneously gives the wrong total (they
+        // would all land in the stream if all three were added) and including
+        // dissolved acid gases gives the electrolyte solver an inconsistent
+        // liquid-phase enthalpy target on the very first iteration.
         ApplyComposition(recycleToAbs, new Dictionary<string, double>
         {
-            ["Water"]                 = 0.700,
-            // Only the amine that was actually added to the flowsheet will match.
-            ["Methyl diethanolamine"] = 0.290,
-            ["Monoethanolamine"]      = 0.290,
-            ["Diethanolamine"]        = 0.290,
-            ["Carbon dioxide"]        = 0.005,
-            ["Hydrogen sulfide"]      = 0.003,
-            ["Methane"]               = 0.001,
+            ["Water"]  = 0.70,
+            [amineName] = 0.30,
         });
 
         // Dynamic setup: one integrator + one schedule.
@@ -390,12 +391,17 @@ public static class AcidGasRemovalDynamicTemplate
             });
         }
 
-        // Prefer amine-specific package, then electrolyte methods, then fallback.
+        // Prefer the DWSIM "Amines" package (designed for sweetening) first.
+        // Fall back to Peng-Robinson rather than Electrolyte NRTL: the generic
+        // Electrolyte packages run Flash_PH on every stream including the
+        // high-pressure gas side, where the Newton loop in ElectrolytySVLE.Flash_PH
+        // diverges.  Peng-Robinson is robust for the dynamic skeleton; only
+        // promote Electrolyte methods if nothing better is found.
         var preferred =
             Match("amines") ??
+            Match("peng", "robinson") ??
             Match("electrolyte", "nrtl") ??
             Match("electrolyte") ??
-            Match("peng", "robinson") ??
             pps.FirstOrDefault();
 
         if (string.IsNullOrWhiteSpace(preferred))
@@ -429,13 +435,13 @@ public static class AcidGasRemovalDynamicTemplate
         }
     }
 
-    private static bool AddFirstAvailableCompound(IFlowsheet sim, IEnumerable<string> names)
+    private static string AddFirstAvailableCompound(IFlowsheet sim, IEnumerable<string> names)
     {
         foreach (var n in names)
         {
-            if (AddCompoundIfAvailable(sim, n)) return true;
+            if (AddCompoundIfAvailable(sim, n)) return n;
         }
-        return false;
+        return null;
     }
 
     /// <summary>
