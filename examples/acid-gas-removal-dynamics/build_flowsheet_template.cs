@@ -133,7 +133,7 @@ public static class AcidGasRemovalDynamicTemplate
         int absNs = ((dynamic)absorber).Stages.Count - 1; // index of last (bottom) stage
         ((dynamic)absorber).ConnectFeed(absFeed, absNs);      // gas at bottom stage
         ((dynamic)absorber).ConnectFeed(recycleToAbs, 0);     // lean amine at top stage
-        ((dynamic)absorber).ConnectDistillate(hotRichGas);    // treated gas exits top
+        ((dynamic)absorber).ConnectTopProduct(hotRichGas);    // treated gas exits top (AbsorptionColumn API)
         ((dynamic)absorber).ConnectBottoms(richAmine);        // rich amine exits bottom
 
         // --- Three-stage regeneration cascade ---
