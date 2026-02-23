@@ -29,18 +29,34 @@ public static class AcidGasRemovalDynamicTemplate
         AddCompoundIfAvailable(sim, "Propane");
 
         // Amine package compounds: pick one amine at minimum (prefer MDEA, then MEA, then DEA).
-        var amineAdded = AddFirstAvailableCompound(sim, new[]
+        // AddFirstAvailableCompound returns the name of the compound that was added so
+        // downstream seed compositions can target only the amine actually present.
+        var amineName = AddFirstAvailableCompound(sim, new[]
         {
             "Methyl diethanolamine",
             "Monoethanolamine",
             "Diethanolamine"
         });
-        if (!amineAdded)
+        if (amineName == null)
             throw new Exception("Could not add any amine compound (MDEA/MEA/DEA). Please verify your component database.");
 
-        // Thermodynamic package selection for amine systems.
-        var ppName = SelectAminePropertyPackage(sim);
-        sim.CreateAndAddPropertyPackage(ppName);
+        // Two property packages are needed to prevent Electrolyte PH-flash divergence
+        // on the high-pressure gas side.
+        //
+        //  gasPP  = Peng-Robinson: assigned to every gas-path stream and unit.
+        //           Robust at high P/T for CH4/CO2/H2S, uses Flash_PT only.
+        //  aminePP = Amines/Electrolyte: assigned to the liquid amine loop only.
+        //           Uses electrolyte flash, appropriate for aqueous amine phases.
+        //
+        // If both resolve to the same package (e.g. only PR is installed) a second
+        // instance is still created so each side has its own registered UniqueID.
+        var ppAmineName = SelectAminePropertyPackage(sim);
+        var ppGasName = sim.GetAvailablePropertyPackages()
+            .FirstOrDefault(x => { var l = x.ToLowerInvariant();
+                                   return l.Contains("peng") && l.Contains("robinson"); })
+            ?? ppAmineName;
+        var gasPP  = sim.CreateAndAddPropertyPackage(ppGasName);
+        var aminePP = sim.CreateAndAddPropertyPackage(ppAmineName);
 
         // --- Core process blocks ---
         var feed = sim.AddObject(ObjectType.MaterialStream, 40, 220, "Feed");
@@ -217,6 +233,35 @@ public static class AcidGasRemovalDynamicTemplate
         // -----------------------------------------------------------------------
         ((dynamic)leanPump).DeltaP = 3_400_000.0; // Pa (~3.4 MPa pump head)
 
+        // -----------------------------------------------------------------------
+        // Per-object property package assignment.
+        //
+        // Without explicit assignment every object falls back to the FIRST
+        // package registered in sim.PropertyPackages (gasPP).  The amine-loop
+        // objects must be explicitly pointed at aminePP so they get electrolyte
+        // chemistry while the gas path keeps using Peng-Robinson.
+        // -----------------------------------------------------------------------
+
+        // Gas path → Peng-Robinson.
+        foreach (var obj in new ISimulationObject[] {
+            feed, saturationMixer, saturatedFeed, feedSeparator,
+            absFeed, absorber, hotRichGas, richCooler, coolRichGas,
+            salesSeparator, salesGas, feedSepLiquid, salesSepLiquid })
+        {
+            ((dynamic)obj).PropertyPackage = gasPP;
+        }
+
+        // Amine loop → Amines / Electrolyte package.
+        foreach (var obj in new ISimulationObject[] {
+            recycleToAbs, richAmine,
+            regenerator1, regenerator2, regenerator3,
+            leanAmine, leanPump, pumpedLeanAmine,
+            leanSaturator, leanToAbs, amineRecycle,
+            iFlashOut, iiFlashOut, acidicGas1, acidicGas2, acidicGas })
+        {
+            ((dynamic)obj).PropertyPackage = aminePP;
+        }
+
         // Baseline feed specs (SI). Equivalent of P/T/flow sanity check.
         ((dynamic)feed).SetTemperature(313.15);
         ((dynamic)feed).SetPressure(3_500_000.0);
@@ -248,16 +293,15 @@ public static class AcidGasRemovalDynamicTemplate
         ((dynamic)recycleToAbs).SetTemperature(313.15);
         ((dynamic)recycleToAbs).SetPressure(3_500_000.0);
         ((dynamic)recycleToAbs).SetMassFlow(10.0);
+        // Seed with only the amine that is actually in the flowsheet.
+        // Setting all three amines simultaneously gives the wrong total (they
+        // would all land in the stream if all three were added) and including
+        // dissolved acid gases gives the electrolyte solver an inconsistent
+        // liquid-phase enthalpy target on the very first iteration.
         ApplyComposition(recycleToAbs, new Dictionary<string, double>
         {
-            ["Water"]                 = 0.700,
-            // Only the amine that was actually added to the flowsheet will match.
-            ["Methyl diethanolamine"] = 0.290,
-            ["Monoethanolamine"]      = 0.290,
-            ["Diethanolamine"]        = 0.290,
-            ["Carbon dioxide"]        = 0.005,
-            ["Hydrogen sulfide"]      = 0.003,
-            ["Methane"]               = 0.001,
+            ["Water"]  = 0.70,
+            [amineName] = 0.30,
         });
 
         // Dynamic setup: one integrator + one schedule.
@@ -390,7 +434,10 @@ public static class AcidGasRemovalDynamicTemplate
             });
         }
 
-        // Prefer amine-specific package, then electrolyte methods, then fallback.
+        // For the amine loop, prefer packages with amine/electrolyte chemistry.
+        // Peng-Robinson is listed last: it cannot model CO2/H2S absorption into
+        // amine solutions.  The gas-side PR package is selected separately in
+        // Generate(); this method only chooses the amine-loop package.
         var preferred =
             Match("amines") ??
             Match("electrolyte", "nrtl") ??
@@ -429,13 +476,13 @@ public static class AcidGasRemovalDynamicTemplate
         }
     }
 
-    private static bool AddFirstAvailableCompound(IFlowsheet sim, IEnumerable<string> names)
+    private static string AddFirstAvailableCompound(IFlowsheet sim, IEnumerable<string> names)
     {
         foreach (var n in names)
         {
-            if (AddCompoundIfAvailable(sim, n)) return true;
+            if (AddCompoundIfAvailable(sim, n)) return n;
         }
-        return false;
+        return null;
     }
 
     /// <summary>
