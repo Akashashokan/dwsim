@@ -40,9 +40,23 @@ public static class AcidGasRemovalDynamicTemplate
         if (amineName == null)
             throw new Exception("Could not add any amine compound (MDEA/MEA/DEA). Please verify your component database.");
 
-        // Thermodynamic package selection for amine systems.
-        var ppName = SelectAminePropertyPackage(sim);
-        sim.CreateAndAddPropertyPackage(ppName);
+        // Two property packages are needed to prevent Electrolyte PH-flash divergence
+        // on the high-pressure gas side.
+        //
+        //  gasPP  = Peng-Robinson: assigned to every gas-path stream and unit.
+        //           Robust at high P/T for CH4/CO2/H2S, uses Flash_PT only.
+        //  aminePP = Amines/Electrolyte: assigned to the liquid amine loop only.
+        //           Uses electrolyte flash, appropriate for aqueous amine phases.
+        //
+        // If both resolve to the same package (e.g. only PR is installed) a second
+        // instance is still created so each side has its own registered UniqueID.
+        var ppAmineName = SelectAminePropertyPackage(sim);
+        var ppGasName = sim.GetAvailablePropertyPackages()
+            .FirstOrDefault(x => { var l = x.ToLowerInvariant();
+                                   return l.Contains("peng") && l.Contains("robinson"); })
+            ?? ppAmineName;
+        var gasPP  = sim.CreateAndAddPropertyPackage(ppGasName);
+        var aminePP = sim.CreateAndAddPropertyPackage(ppAmineName);
 
         // --- Core process blocks ---
         var feed = sim.AddObject(ObjectType.MaterialStream, 40, 220, "Feed");
@@ -219,6 +233,35 @@ public static class AcidGasRemovalDynamicTemplate
         // -----------------------------------------------------------------------
         ((dynamic)leanPump).DeltaP = 3_400_000.0; // Pa (~3.4 MPa pump head)
 
+        // -----------------------------------------------------------------------
+        // Per-object property package assignment.
+        //
+        // Without explicit assignment every object falls back to the FIRST
+        // package registered in sim.PropertyPackages (gasPP).  The amine-loop
+        // objects must be explicitly pointed at aminePP so they get electrolyte
+        // chemistry while the gas path keeps using Peng-Robinson.
+        // -----------------------------------------------------------------------
+
+        // Gas path → Peng-Robinson.
+        foreach (var obj in new ISimulationObject[] {
+            feed, saturationMixer, saturatedFeed, feedSeparator,
+            absFeed, absorber, hotRichGas, richCooler, coolRichGas,
+            salesSeparator, salesGas, feedSepLiquid, salesSepLiquid })
+        {
+            ((dynamic)obj).PropertyPackage = gasPP;
+        }
+
+        // Amine loop → Amines / Electrolyte package.
+        foreach (var obj in new ISimulationObject[] {
+            recycleToAbs, richAmine,
+            regenerator1, regenerator2, regenerator3,
+            leanAmine, leanPump, pumpedLeanAmine,
+            leanSaturator, leanToAbs, amineRecycle,
+            iFlashOut, iiFlashOut, acidicGas1, acidicGas2, acidicGas })
+        {
+            ((dynamic)obj).PropertyPackage = aminePP;
+        }
+
         // Baseline feed specs (SI). Equivalent of P/T/flow sanity check.
         ((dynamic)feed).SetTemperature(313.15);
         ((dynamic)feed).SetPressure(3_500_000.0);
@@ -391,17 +434,15 @@ public static class AcidGasRemovalDynamicTemplate
             });
         }
 
-        // Prefer the DWSIM "Amines" package (designed for sweetening) first.
-        // Fall back to Peng-Robinson rather than Electrolyte NRTL: the generic
-        // Electrolyte packages run Flash_PH on every stream including the
-        // high-pressure gas side, where the Newton loop in ElectrolytySVLE.Flash_PH
-        // diverges.  Peng-Robinson is robust for the dynamic skeleton; only
-        // promote Electrolyte methods if nothing better is found.
+        // For the amine loop, prefer packages with amine/electrolyte chemistry.
+        // Peng-Robinson is listed last: it cannot model CO2/H2S absorption into
+        // amine solutions.  The gas-side PR package is selected separately in
+        // Generate(); this method only chooses the amine-loop package.
         var preferred =
             Match("amines") ??
-            Match("peng", "robinson") ??
             Match("electrolyte", "nrtl") ??
             Match("electrolyte") ??
+            Match("peng", "robinson") ??
             pps.FirstOrDefault();
 
         if (string.IsNullOrWhiteSpace(preferred))
