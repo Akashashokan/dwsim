@@ -8,6 +8,7 @@ using DWSIM.Interfaces.Enums;
 using DWSIM.Interfaces.Enums.GraphicObjects;
 using DWSIM.DynamicsManager;
 using DWSIM.FlowsheetSolver;
+using DWSIM.UnitOperations.UnitOperations;
 
 // Acid gas removal dynamic template with amine-ready defaults and KPI monitoring.
 
@@ -176,12 +177,11 @@ public static class AcidGasRemovalDynamicTemplate
         //   coolRichGas.SpecType = Temperature_and_Pressure.  The solver then
         //   recalculates coolRichGas with the robust Flash_PT path instead.
         // -----------------------------------------------------------------------
-        // CalcMode is a VB.NET enum; dynamic dispatch cannot implicitly convert int →
-        // enum, so we read the current boxed value to obtain the runtime type and
-        // then use Enum.ToObject to produce the correctly-typed enum constant.
-        object calcModeBoxed = ((dynamic)richCooler).CalcMode;
-        ((dynamic)richCooler).CalcMode = Enum.ToObject(calcModeBoxed.GetType(), 1); // 1 = OutletTemperature
-        ((dynamic)richCooler).OutletTemperature = 305.15; // cool ~8 K to 32 °C
+        // CalcMode is a typed enum — dynamic dispatch rejects both int and boxed object.
+        // Cast through the concrete type to set it without any dynamic dispatch.
+        var cooler = (Cooler)(object)richCooler;
+        cooler.CalcMode = Cooler.CalculationMode.OutletTemperature;
+        cooler.OutletTemperature = 305.15; // cool ~8 K to 32 °C
 
         // -----------------------------------------------------------------------
         // Regenerator column specs.
