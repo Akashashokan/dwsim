@@ -9,6 +9,7 @@ using DWSIM.Interfaces.Enums.GraphicObjects;
 using DWSIM.DynamicsManager;
 using DWSIM.FlowsheetSolver;
 using DWSIM.UnitOperations.UnitOperations;
+using DWSIM.Thermodynamics.PropertyPackages;
 
 // Acid gas removal dynamic template with amine-ready defaults and KPI monitoring.
 
@@ -57,6 +58,14 @@ public static class AcidGasRemovalDynamicTemplate
             ?? ppAmineName;
         var gasPP  = sim.CreateAndAddPropertyPackage(ppGasName);
         var aminePP = sim.CreateAndAddPropertyPackage(ppAmineName);
+
+        // MaterialStream.PropertyPackage shadows the interface property with the
+        // concrete PropertyPackage class.  Dynamic dispatch resolves to the Shadows
+        // overload which requires the concrete type; assigning an IPropertyPackage
+        // reference fails at runtime.  Cast through object to concrete type here so
+        // the typed setter stores _ppid (serialization-safe) for each stream.
+        var gasPPc  = (PropertyPackage)(object)gasPP;
+        var aminePPc = (PropertyPackage)(object)aminePP;
 
         // --- Core process blocks ---
         var feed = sim.AddObject(ObjectType.MaterialStream, 40, 220, "Feed");
@@ -248,7 +257,7 @@ public static class AcidGasRemovalDynamicTemplate
             absFeed, absorber, hotRichGas, richCooler, coolRichGas,
             salesSeparator, salesGas, feedSepLiquid, salesSepLiquid })
         {
-            ((dynamic)obj).PropertyPackage = gasPP;
+            ((dynamic)obj).PropertyPackage = gasPPc;
         }
 
         // Amine loop → Amines / Electrolyte package.
@@ -259,7 +268,7 @@ public static class AcidGasRemovalDynamicTemplate
             leanSaturator, leanToAbs, amineRecycle,
             iFlashOut, iiFlashOut, acidicGas1, acidicGas2, acidicGas })
         {
-            ((dynamic)obj).PropertyPackage = aminePP;
+            ((dynamic)obj).PropertyPackage = aminePPc;
         }
 
         // Baseline feed specs (SI). Equivalent of P/T/flow sanity check.
