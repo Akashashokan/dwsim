@@ -406,6 +406,39 @@ public static class AcidGasRemovalDynamicTemplate
             [amineName] = 0.0,
         });
 
+        // -----------------------------------------------------------------------
+        // Pre-flash absorber feed streams.
+        //
+        // The Sum-Rates energy balance (SumRates.vb:573-617) builds the TDMA
+        // matrix using:
+        //   HF(stage) = stream.Phases[0].Properties.enthalpy
+        //               * stream.Phases[0].Properties.molecularWeight
+        //
+        // If a stream has not been TP-flashed, enthalpy = null/0 and HF = 0.
+        // The energy balance residual at the feed stage then equals the full
+        // enthalpy flow of the un-fed stream (e.g. 555 mol/s × H_liquid_water
+        // at 35 bar ≈ large negative kJ/s).  The TDMA correction to eliminate
+        // this residual is ΔT ≈ -2300 K; with 0.25 damping the stage lands at
+        //   T = 313 + 0.175 × (-2303) = -90 K  ← exactly the thrown value.
+        //
+        // Calling Calculate(true, true) with SpecType = T_and_P forces a TP
+        // flash and populates both enthalpy and molecularWeight, so HF is
+        // physically correct and the TDMA correction stays within ±20 K.
+        // -----------------------------------------------------------------------
+        try
+        {
+            ((dynamic)recycleToAbs).SpecType = StreamSpec.Temperature_and_Pressure;
+            ((dynamic)recycleToAbs).Calculate(true, true);
+        }
+        catch { /* flowsheet solver will re-flash on its first pass */ }
+
+        try
+        {
+            ((dynamic)absFeed).SpecType = StreamSpec.Temperature_and_Pressure;
+            ((dynamic)absFeed).Calculate(true, true);
+        }
+        catch { /* flowsheet solver will re-flash on its first pass */ }
+
         // Dynamic setup: one integrator + one schedule.
         sim.DynamicMode = true;
 
