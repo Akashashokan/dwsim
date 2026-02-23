@@ -350,8 +350,13 @@ public static class AcidGasRemovalDynamicTemplate
         ((dynamic)absFeed).SetTemperature(313.15);
         ((dynamic)absFeed).SetPressure(3_500_000.0);
         ((dynamic)feedSepLiquid).SetPressure(3_500_000.0);
-        ((dynamic)feedSeparator).OverrideP    = true;
-        ((dynamic)feedSeparator).FlashPressure = 3_500_000.0;
+        // Do NOT set feedSeparator.OverrideP = true:
+        // OverrideP forces CalculationMode = Legacy (Vessel.vb:678), and
+        // Legacy+OverrideP checks for an energy stream on connector 6
+        // (Vessel.vb:825) — throwing "EnergyStreamRequired" when none exists.
+        // In the default Legacy mode WITHOUT OverrideP the vessel reads its
+        // flash pressure from the inlet stream (P = MixedStream.pressure),
+        // which is already 3.5 MPa via saturatedFeed.SetPressure above.
 
         // Seed the lean-amine recycle tear stream with a physically meaningful
         // initial guess so the absorber solver has a valid starting point on the
