@@ -154,12 +154,38 @@ public static class AcidGasRemovalDynamicTemplate
         // --- Absorber ---
         // Gas (absFeed) enters at the BOTTOM stage; lean amine (recycleToAbs)
         // enters at the TOP stage (stage 0).  Treated gas exits at the top
-        // (ConnectDistillate → Behavior.Distillate), rich liquid exits at the
+        // (ConnectTopProduct → Behavior.Distillate), rich liquid exits at the
         // bottom (ConnectBottoms → Behavior.BottomsLiquid).
-        int absNs = ((dynamic)absorber).Stages.Count - 1; // index of last (bottom) stage
-        ((dynamic)absorber).ConnectFeed(absFeed, absNs);      // gas at bottom stage
-        ((dynamic)absorber).ConnectFeed(recycleToAbs, 0);     // lean amine at top stage
-        ((dynamic)absorber).ConnectTopProduct(hotRichGas);    // treated gas exits top (AbsorptionColumn API)
+        //
+        // CRITICAL: SetNumberOfStages MUST be called before ConnectFeed.
+        // SetNumberOfStages(6) on the default 12-stage column calls
+        // Stages.RemoveRange(5, 6), which removes the current "mid" stages and
+        // keeps the BottomStage object (formerly at index 11) as the new index 5.
+        // If ConnectFeed runs first, it stores AssociatedStage = 11 in
+        // MaterialStreams.  After stage removal that index no longer exists, so
+        // GetSolverInputData finds no feed on the last stage (FT.Last = 0) and
+        // the Naphtali-Sandholm solver either throws "needs a feed on last stage"
+        // or silently diverges with a large objective (~2000).
+        //
+        // Stabilization choices:
+        //   • 6 stages: smaller Jacobian, simpler starting point for NR.
+        //   • Pressure = 3.5 MPa on every stage: K-values are physically valid
+        //     at 35 bar / ~313 K; the default 1 atm gives near-zero K-values
+        //     and a near-singular Jacobian.
+        //   • Efficiency = 1.0: ideal stages eliminate the efficiency
+        //     sub-iteration on the first convergence attempt.
+        ((dynamic)absorber).SetNumberOfStages(6);
+        var absStages = ((dynamic)absorber).Stages;
+        for (int k = 0; k < absStages.Count; k++)
+        {
+            absStages[k].P = 3_500_000.0; // 35 bar — matches feed gas pressure
+            absStages[k].Efficiency = 1.0;
+        }
+
+        int absNs = ((dynamic)absorber).Stages.Count - 1; // 5 for 6 stages
+        ((dynamic)absorber).ConnectFeed(absFeed, absNs);      // gas at bottom stage (5)
+        ((dynamic)absorber).ConnectFeed(recycleToAbs, 0);     // lean amine at top stage (0)
+        ((dynamic)absorber).ConnectTopProduct(hotRichGas);    // treated gas exits top
         ((dynamic)absorber).ConnectBottoms(richAmine);        // rich amine exits bottom
 
         // --- Three-stage regeneration cascade ---
@@ -241,30 +267,6 @@ public static class AcidGasRemovalDynamicTemplate
         // matching the absorber operating pressure.
         // -----------------------------------------------------------------------
         ((dynamic)leanPump).DeltaP = 3_400_000.0; // Pa (~3.4 MPa pump head)
-
-        // -----------------------------------------------------------------------
-        // Absorber solver stabilization.
-        //
-        // Default: 12 stages, pressures initialized to 101 325 Pa (1 atm).
-        // With the default setup the Naphtali-Sandholm Newton-Raphson solver
-        // sees near-zero K-values (P_bubble >> stage P) and produces a residual
-        // objective of ~2000, far too large to converge.
-        //
-        // Fixes applied:
-        //   1. Reduce stage count to 6 — smaller Jacobian, fewer degrees of
-        //      freedom, easier starting problem for NR.
-        //   2. Set every stage pressure to 3.5 MPa — consistent with the
-        //      35-bar feed gas so K-values are physically reasonable at T~313 K.
-        //   3. Set stage efficiencies to 1.0 (ideal stages) — avoids a second
-        //      set of unknowns during the first convergence attempt.
-        // -----------------------------------------------------------------------
-        ((dynamic)absorber).SetNumberOfStages(6);
-        var absStages = ((dynamic)absorber).Stages;
-        for (int k = 0; k < absStages.Count; k++)
-        {
-            absStages[k].P = 3_500_000.0; // 35 bar — matches feed gas pressure
-            absStages[k].Efficiency = 1.0;
-        }
 
         // -----------------------------------------------------------------------
         // Per-object property package assignment.
