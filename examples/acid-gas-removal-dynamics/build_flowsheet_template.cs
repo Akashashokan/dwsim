@@ -176,7 +176,11 @@ public static class AcidGasRemovalDynamicTemplate
         //   coolRichGas.SpecType = Temperature_and_Pressure.  The solver then
         //   recalculates coolRichGas with the robust Flash_PT path instead.
         // -----------------------------------------------------------------------
-        ((dynamic)richCooler).CalcMode = 1;            // 1 = OutletTemperature
+        // CalcMode is a VB.NET enum; dynamic dispatch cannot implicitly convert int →
+        // enum, so we read the current boxed value to obtain the runtime type and
+        // then use Enum.ToObject to produce the correctly-typed enum constant.
+        object calcModeBoxed = ((dynamic)richCooler).CalcMode;
+        ((dynamic)richCooler).CalcMode = Enum.ToObject(calcModeBoxed.GetType(), 1); // 1 = OutletTemperature
         ((dynamic)richCooler).OutletTemperature = 305.15; // cool ~8 K to 32 °C
 
         // -----------------------------------------------------------------------
