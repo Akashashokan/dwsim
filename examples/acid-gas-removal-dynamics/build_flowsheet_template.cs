@@ -115,6 +115,26 @@ public static class AcidGasRemovalDynamicTemplate
         sim.ConnectObjects(amineRecycle.GraphicObject, recycleToAbs.GraphicObject, 0, 0);
         sim.ConnectObjects(recycleToAbs.GraphicObject, absorber.GraphicObject, 0, 1);
 
+        // -----------------------------------------------------------------------
+        // Cooler: switch from default HeatRemoved (SpecType=PH on outlet) to
+        // OutletTemperature (SpecType=TP on outlet).
+        //
+        // Root cause of "PH Flash [Electrolyte]: Temperature did not converge":
+        //   After the absorber computes a valid gas outlet (hotRichGas), the
+        //   Cooler in default HeatRemoved/DeltaQ=0 mode copies H_in to H_out and
+        //   marks coolRichGas with SpecType = Pressure_and_Enthalpy plus
+        //   AtEquilibrium = False.  The FlowsheetSolver then calls
+        //   coolRichGas.Calculate(), which invokes ElectrolyteSVLE.Flash_PH.
+        //   For gas-phase acid-gas mixtures the Newton loop inside Flash_PH
+        //   diverges within 25 iterations and throws the exception.
+        //
+        // Fix: OutletTemperature mode uses a PT flash internally and sets
+        //   coolRichGas.SpecType = Temperature_and_Pressure.  The solver then
+        //   recalculates coolRichGas with the robust Flash_PT path instead.
+        // -----------------------------------------------------------------------
+        ((dynamic)richCooler).CalcMode = 1;            // 1 = OutletTemperature
+        ((dynamic)richCooler).OutletTemperature = 305.15; // cool ~8 K to 32 °C
+
         // Baseline feed specs (SI). Equivalent of P/T/flow sanity check.
         ((dynamic)feed).SetTemperature(313.15);
         ((dynamic)feed).SetPressure(3_500_000.0);
