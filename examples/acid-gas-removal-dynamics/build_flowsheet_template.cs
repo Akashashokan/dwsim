@@ -157,42 +157,37 @@ public static class AcidGasRemovalDynamicTemplate
         // (ConnectTopProduct → Behavior.Distillate), rich liquid exits at the
         // bottom (ConnectBottoms → Behavior.BottomsLiquid).
         //
-        // CRITICAL: SetNumberOfStages MUST be called before ConnectFeed.
-        // SetNumberOfStages(6) on the default 12-stage column calls
-        // Stages.RemoveRange(5, 6), which removes the current "mid" stages and
-        // keeps the BottomStage object (formerly at index 11) as the new index 5.
-        // If ConnectFeed runs first, it stores AssociatedStage = 11 in
-        // MaterialStreams.  After stage removal that index no longer exists, so
-        // GetSolverInputData finds no feed on the last stage (FT.Last = 0) and
-        // the Naphtali-Sandholm solver either throws "needs a feed on last stage"
-        // or silently diverges with a large objective (~2000).
+        // CRITICAL ordering: SetNumberOfStages MUST run before ConnectFeed.
+        // SetNumberOfStages(6) calls Stages.RemoveRange(5, 6) on the default
+        // 12-stage column; it removes "mid" stages and keeps BottomStage
+        // (formerly index 11) as the new index 5.  ConnectFeed stores
+        // AssociatedStage as an integer index — if feeds are connected first,
+        // they store index 11, which is out of range after resize.
+        // GetSolverInputData then finds FT.Last = 0 and throws.
         //
-        // Stabilization choices:
-        //   • 6 stages: smaller Jacobian, simpler starting point for NR.
-        //   • Pressure = 3.5 MPa on every stage: K-values are physically valid
-        //     at 35 bar / ~313 K; the default 1 atm gives near-zero K-values
-        //     and a near-singular Jacobian.
-        //   • Efficiency = 1.0: ideal stages eliminate the efficiency
-        //     sub-iteration on the first convergence attempt.
+        // Feed stage constraints (AbsorptionColumn, GetSolverInputData:3264):
+        //   FT.First (stage 0) must be non-zero  → a feed MUST be on stage 0
+        //   FT.Last  (stage ns) must be non-zero → a feed MUST be on stage ns
+        // Both checks are hard throws; there is NO flexibility on stage indices.
+        //
+        // Pressure profile: use SetTopPressure + ColumnPressureDrop rather
+        // than manually patching absStages[k].P.  GetSolverInputData applies
+        // ColumnPressureDrop as a linear profile (Stages(i).P = Stages(0).P +
+        // i/ns * ColumnPressureDrop), which is authoritative and will not be
+        // silently overwritten by propagation before the solve.
         ((dynamic)absorber).SetNumberOfStages(6);
+        ((dynamic)absorber).SetTopPressure(3_500_000.0);   // stage 0 = 35 bar
+        ((dynamic)absorber).ColumnPressureDrop = 20_000.0; // 0.2 bar top→bottom
+        // Efficiencies still require a manual loop (no column-level API).
         var absStages = ((dynamic)absorber).Stages;
         for (int k = 0; k < absStages.Count; k++)
-        {
-            absStages[k].P = 3_500_000.0; // 35 bar — matches feed gas pressure
             absStages[k].Efficiency = 1.0;
-        }
 
         int absNs = ((dynamic)absorber).Stages.Count - 1; // 5 for 6 stages
-        // Connect gas one stage above the true BottomStage (absNs-1 = 4).
-        // With only 6 stages the BottomStage has special solver handling (liquid
-        // sump / hold-up); feeding gas directly into it can produce a degenerate
-        // vapour-fraction boundary condition on the first NR iteration.
-        // Stage absNs-1 avoids that edge case while still putting gas near
-        // the bottom of the column where the stripping driving force is highest.
-        ((dynamic)absorber).ConnectFeed(absFeed, absNs - 1);  // gas at stage 4 (near bottom)
-        ((dynamic)absorber).ConnectFeed(recycleToAbs, 0);     // lean amine at top stage (0)
-        ((dynamic)absorber).ConnectTopProduct(hotRichGas);    // treated gas exits top
-        ((dynamic)absorber).ConnectBottoms(richAmine);        // rich amine exits bottom
+        ((dynamic)absorber).ConnectFeed(absFeed, absNs);   // gas at stage 5 (LAST — required)
+        ((dynamic)absorber).ConnectFeed(recycleToAbs, 0);  // lean amine at stage 0 (FIRST — required)
+        ((dynamic)absorber).ConnectTopProduct(hotRichGas);  // treated gas exits top
+        ((dynamic)absorber).ConnectBottoms(richAmine);      // rich amine exits bottom
 
         // --- Three-stage regeneration cascade ---
         // Physical process: liquid partially-stripped amine flows DOWN the cascade
