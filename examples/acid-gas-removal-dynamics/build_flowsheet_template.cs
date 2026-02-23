@@ -183,7 +183,13 @@ public static class AcidGasRemovalDynamicTemplate
         }
 
         int absNs = ((dynamic)absorber).Stages.Count - 1; // 5 for 6 stages
-        ((dynamic)absorber).ConnectFeed(absFeed, absNs);      // gas at bottom stage (5)
+        // Connect gas one stage above the true BottomStage (absNs-1 = 4).
+        // With only 6 stages the BottomStage has special solver handling (liquid
+        // sump / hold-up); feeding gas directly into it can produce a degenerate
+        // vapour-fraction boundary condition on the first NR iteration.
+        // Stage absNs-1 avoids that edge case while still putting gas near
+        // the bottom of the column where the stripping driving force is highest.
+        ((dynamic)absorber).ConnectFeed(absFeed, absNs - 1);  // gas at stage 4 (near bottom)
         ((dynamic)absorber).ConnectFeed(recycleToAbs, 0);     // lean amine at top stage (0)
         ((dynamic)absorber).ConnectTopProduct(hotRichGas);    // treated gas exits top
         ((dynamic)absorber).ConnectBottoms(richAmine);        // rich amine exits bottom
@@ -326,6 +332,27 @@ public static class AcidGasRemovalDynamicTemplate
             ["Diethanolamine"]        = 0.000,
         });
 
+        // -----------------------------------------------------------------------
+        // Gas-path pressure seeding — keep every stream between the feed and
+        // the absorber at 35 bar.
+        //
+        // The absorber stage pressures are all initialised to 3.5 MPa.  If
+        // absFeed arrives with a different pressure (e.g. the Vessel/Mixer
+        // default of 101 325 Pa) the stage enthalpy and K-value discontinuity
+        // makes the first NR Jacobian ill-conditioned and the objective can
+        // jump to ~1e11 on the very first iteration.
+        //
+        // For the Vessel, setting OverrideP = True forces the internal flash
+        // to use FlashPressure regardless of what pressure propagation delivers.
+        // -----------------------------------------------------------------------
+        ((dynamic)saturatedFeed).SetTemperature(313.15);
+        ((dynamic)saturatedFeed).SetPressure(3_500_000.0);
+        ((dynamic)absFeed).SetTemperature(313.15);
+        ((dynamic)absFeed).SetPressure(3_500_000.0);
+        ((dynamic)feedSepLiquid).SetPressure(3_500_000.0);
+        ((dynamic)feedSeparator).OverrideP    = true;
+        ((dynamic)feedSeparator).FlashPressure = 3_500_000.0;
+
         // Seed the lean-amine recycle tear stream with a physically meaningful
         // initial guess so the absorber solver has a valid starting point on the
         // very first iteration (before the Recycle block has converged).
@@ -337,16 +364,19 @@ public static class AcidGasRemovalDynamicTemplate
         // would all land in the stream if all three were added) and including
         // dissolved acid gases gives the electrolyte solver an inconsistent
         // liquid-phase enthalpy target on the very first iteration.
-        // Under Peng-Robinson (used for the absorber) a high amine concentration
-        // produces large liquid-phase fugacity corrections that make the K-values
-        // unstable on the first NR iteration.  Start with a dilute amine seed
-        // (5 mol%) so PR K-values are dominated by the water/gas interactions
-        // where PR is well-parameterised.  The Recycle block will drive this
-        // toward the true steady-state value over successive iterations.
+        // Use pure-water lean solvent for the initial absorber solve.
+        //
+        // PR is not parameterised for aqueous amine chemistry; even at low mole
+        // fractions the amine binary interaction parameters produce large
+        // liquid-phase fugacity corrections that destabilise the NR Jacobian on
+        // the first column iteration.  Starting with pure water makes the absorber
+        // a simple "water-wash" column under PR — well-conditioned and reliably
+        // convergent.  The Recycle block propagates the true amine composition
+        // through successive steady-state iterations once the skeleton converges.
         ApplyComposition(recycleToAbs, new Dictionary<string, double>
         {
-            ["Water"]   = 0.95,
-            [amineName] = 0.05,
+            ["Water"]   = 1.0,
+            [amineName] = 0.0,
         });
 
         // Dynamic setup: one integrator + one schedule.
