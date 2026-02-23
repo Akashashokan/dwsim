@@ -64,8 +64,10 @@ public static class AcidGasRemovalDynamicTemplate
         var salesGas = sim.AddObject(ObjectType.MaterialStream, 760, 140, "Sales gas");
 
         var richAmine = sim.AddObject(ObjectType.MaterialStream, 420, 255, "Rich amine");
-        var iFlashOut = sim.AddObject(ObjectType.MaterialStream, 560, 255, "I Flash out");
-        var iiFlashOut = sim.AddObject(ObjectType.MaterialStream, 720, 255, "II Flash out");
+        var iFlashOut = sim.AddObject(ObjectType.MaterialStream, 560, 360, "Amine to regen II");
+        var iiFlashOut = sim.AddObject(ObjectType.MaterialStream, 720, 360, "Amine to regen III");
+        var acidicGas1 = sim.AddObject(ObjectType.MaterialStream, 580, 255, "Acid gas from regen I");
+        var acidicGas2 = sim.AddObject(ObjectType.MaterialStream, 740, 255, "Acid gas from regen II");
         var acidicGas = sim.AddObject(ObjectType.MaterialStream, 890, 255, "Acidic gas to compressor");
 
         var leanAmine = sim.AddObject(ObjectType.MaterialStream, 930, 470, "LEAN AMINE");
@@ -82,29 +84,20 @@ public static class AcidGasRemovalDynamicTemplate
         foreach (var o in sim.SimulationObjects.Values)
             ((dynamic)o.GraphicObject).PositionConnectors();
 
-        // Skeleton connectivity.
+        // Non-column connections (simple streams through Mixer/Vessel/Cooler/Pump):
+        // These only need the graphical link — no internal stream registry involved.
         sim.ConnectObjects(feed.GraphicObject, saturationMixer.GraphicObject, 0, 0);
         sim.ConnectObjects(saturationMixer.GraphicObject, saturatedFeed.GraphicObject, 0, 0);
         sim.ConnectObjects(saturatedFeed.GraphicObject, feedSeparator.GraphicObject, 0, 0);
-        sim.ConnectObjects(feedSeparator.GraphicObject, absFeed.GraphicObject, 0, 0);        // liquid bottom (connector 1) — must be attached or Vessel.Calculate throws
+        sim.ConnectObjects(feedSeparator.GraphicObject, absFeed.GraphicObject, 0, 0);
+        // Vessel output connector 1 (liquid bottom) must be attached or Vessel.Calculate throws.
         sim.ConnectObjects(feedSeparator.GraphicObject, feedSepLiquid.GraphicObject, 1, 0);
-        sim.ConnectObjects(absFeed.GraphicObject, absorber.GraphicObject, 0, 0);
-        sim.ConnectObjects(absorber.GraphicObject, hotRichGas.GraphicObject, 0, 0);
         sim.ConnectObjects(hotRichGas.GraphicObject, richCooler.GraphicObject, 0, 0);
         sim.ConnectObjects(richCooler.GraphicObject, coolRichGas.GraphicObject, 0, 0);
         sim.ConnectObjects(coolRichGas.GraphicObject, salesSeparator.GraphicObject, 0, 0);
-        sim.ConnectObjects(salesSeparator.GraphicObject, salesGas.GraphicObject, 0, 0);        // liquid bottom (connector 1) — must be attached or Vessel.Calculate throws
+        sim.ConnectObjects(salesSeparator.GraphicObject, salesGas.GraphicObject, 0, 0);
+        // Vessel output connector 1 (liquid bottom) must be attached or Vessel.Calculate throws.
         sim.ConnectObjects(salesSeparator.GraphicObject, salesSepLiquid.GraphicObject, 1, 0);
-
-        sim.ConnectObjects(absorber.GraphicObject, richAmine.GraphicObject, 1, 0);
-        sim.ConnectObjects(richAmine.GraphicObject, regenerator1.GraphicObject, 0, 0);
-        sim.ConnectObjects(regenerator1.GraphicObject, iFlashOut.GraphicObject, 0, 0);
-        sim.ConnectObjects(iFlashOut.GraphicObject, regenerator2.GraphicObject, 0, 0);
-        sim.ConnectObjects(regenerator2.GraphicObject, iiFlashOut.GraphicObject, 0, 0);
-        sim.ConnectObjects(iiFlashOut.GraphicObject, regenerator3.GraphicObject, 0, 0);
-        sim.ConnectObjects(regenerator3.GraphicObject, acidicGas.GraphicObject, 0, 0);
-
-        sim.ConnectObjects(regenerator3.GraphicObject, leanAmine.GraphicObject, 1, 0);
         sim.ConnectObjects(leanAmine.GraphicObject, leanPump.GraphicObject, 0, 0);
         sim.ConnectObjects(leanPump.GraphicObject, pumpedLeanAmine.GraphicObject, 0, 0);
         sim.ConnectObjects(pumpedLeanAmine.GraphicObject, leanSaturator.GraphicObject, 0, 0);
@@ -113,7 +106,112 @@ public static class AcidGasRemovalDynamicTemplate
         // a finite calculation order without hitting the "Infinite loop detected" error.
         sim.ConnectObjects(leanToAbs.GraphicObject, amineRecycle.GraphicObject, 0, 0);
         sim.ConnectObjects(amineRecycle.GraphicObject, recycleToAbs.GraphicObject, 0, 0);
-        sim.ConnectObjects(recycleToAbs.GraphicObject, absorber.GraphicObject, 0, 1);
+
+        // -----------------------------------------------------------------------
+        // Column connections: MUST use each column's own Connect* API methods.
+        //
+        // Raw sim.ConnectObjects() only creates the graphical link; it does NOT
+        // populate the column's internal MaterialStreams dictionary.  That
+        // dictionary is the sole source of feed/product data for the column
+        // solver (GetSolverInputData builds F[], FT[], HF[] arrays exclusively
+        // from MaterialStreams entries).
+        //
+        // Consequences of using raw ConnectObjects() instead:
+        //   • Validate() throws "DCConnectionMissingException" (feedok / cmok /
+        //     rmok flags all stay false because no entries exist in
+        //     MaterialStreams).
+        //   • AbsorptionColumn solver throws "The absorber needs a feed stream
+        //     connected to the first/last stage" (FT.First / FT.Last = 0 because
+        //     no Feed entries were found in MaterialStreams).
+        // -----------------------------------------------------------------------
+
+        // --- Absorber ---
+        // Gas (absFeed) enters at the BOTTOM stage; lean amine (recycleToAbs)
+        // enters at the TOP stage (stage 0).  Treated gas exits at the top
+        // (ConnectDistillate → Behavior.Distillate), rich liquid exits at the
+        // bottom (ConnectBottoms → Behavior.BottomsLiquid).
+        int absNs = ((dynamic)absorber).Stages.Count - 1; // index of last (bottom) stage
+        ((dynamic)absorber).ConnectFeed(absFeed, absNs);      // gas at bottom stage
+        ((dynamic)absorber).ConnectFeed(recycleToAbs, 0);     // lean amine at top stage
+        ((dynamic)absorber).ConnectDistillate(hotRichGas);    // treated gas exits top
+        ((dynamic)absorber).ConnectBottoms(richAmine);        // rich amine exits bottom
+
+        // --- Three-stage regeneration cascade ---
+        // Physical process: liquid partially-stripped amine flows DOWN the cascade
+        // (regen1 → regen2 → regen3) as bottoms products.  Acid gas vapour is
+        // released overhead at EACH stage.
+        //
+        //   richAmine → [regen1] → acidicGas1 (overhead)
+        //                        → iFlashOut (bottoms, amine to regen2)
+        //   iFlashOut → [regen2] → acidicGas2 (overhead)
+        //                        → iiFlashOut (bottoms, amine to regen3)
+        //   iiFlashOut→ [regen3] → acidicGas  (overhead, final acid-gas product)
+        //                        → leanAmine  (bottoms, lean amine to pump)
+        ((dynamic)regenerator1).ConnectFeed(richAmine, 1);      // feed just below condenser
+        ((dynamic)regenerator1).ConnectDistillate(acidicGas1);  // acid gas overhead
+        ((dynamic)regenerator1).ConnectBottoms(iFlashOut);      // partially-stripped amine → regen2
+
+        ((dynamic)regenerator2).ConnectFeed(iFlashOut, 1);      // feed just below condenser
+        ((dynamic)regenerator2).ConnectDistillate(acidicGas2);  // acid gas overhead
+        ((dynamic)regenerator2).ConnectBottoms(iiFlashOut);     // further-stripped amine → regen3
+
+        ((dynamic)regenerator3).ConnectFeed(iiFlashOut, 1);     // feed just below condenser
+        ((dynamic)regenerator3).ConnectDistillate(acidicGas);   // final acid gas product
+        ((dynamic)regenerator3).ConnectBottoms(leanAmine);      // lean amine → pump
+
+        // -----------------------------------------------------------------------
+        // Cooler: switch from default HeatRemoved (SpecType=PH on outlet) to
+        // OutletTemperature (SpecType=TP on outlet).
+        //
+        // Root cause of "PH Flash [Electrolyte]: Temperature did not converge":
+        //   After the absorber computes a valid gas outlet (hotRichGas), the
+        //   Cooler in default HeatRemoved/DeltaQ=0 mode copies H_in to H_out and
+        //   marks coolRichGas with SpecType = Pressure_and_Enthalpy plus
+        //   AtEquilibrium = False.  The FlowsheetSolver then calls
+        //   coolRichGas.Calculate(), which invokes ElectrolyteSVLE.Flash_PH.
+        //   For gas-phase acid-gas mixtures the Newton loop inside Flash_PH
+        //   diverges within 25 iterations and throws the exception.
+        //
+        // Fix: OutletTemperature mode uses a PT flash internally and sets
+        //   coolRichGas.SpecType = Temperature_and_Pressure.  The solver then
+        //   recalculates coolRichGas with the robust Flash_PT path instead.
+        // -----------------------------------------------------------------------
+        ((dynamic)richCooler).CalcMode = 1;            // 1 = OutletTemperature
+        ((dynamic)richCooler).OutletTemperature = 305.15; // cool ~8 K to 32 °C
+
+        // -----------------------------------------------------------------------
+        // Regenerator column specs.
+        //
+        // DistillationColumn.Specs["C"] and ["R"] default to:
+        //   C: Stream_Ratio (reflux ratio) = me.RefluxRatio = 5.0
+        //   R: Product_Molar_Flow_Rate     = me.DistillateFlowRate = 0 mol/s
+        //
+        // A reboiler spec of 0 mol/s bottoms means all feed goes overhead, which
+        // collapses the material balance and causes the column to diverge.
+        // We override both specs with a reflux ratio (condenser) and boilup ratio
+        // (reboiler) = 1.0 each — a simple but numerically stable starting point
+        // for a stripping-oriented regeneration column.
+        // -----------------------------------------------------------------------
+        ((dynamic)regenerator1).SetCondenserSpec("Reflux Ratio", 1.0, "");
+        ((dynamic)regenerator1).SetReboilerSpec("Boilup Ratio", 1.0, "");
+        ((dynamic)regenerator2).SetCondenserSpec("Reflux Ratio", 1.0, "");
+        ((dynamic)regenerator2).SetReboilerSpec("Boilup Ratio", 1.0, "");
+        ((dynamic)regenerator3).SetCondenserSpec("Reflux Ratio", 1.0, "");
+        ((dynamic)regenerator3).SetReboilerSpec("Boilup Ratio", 1.0, "");
+
+        // -----------------------------------------------------------------------
+        // Amine recirculation pump: set a pressure rise to match absorber inlet.
+        //
+        // The pump CalcMode defaults to Delta_P = 0, which leaves the outlet at
+        // the same pressure as the regenerator (~101 325 Pa = 1 atm).  The absorber
+        // feed gas is at ~3.5 MPa; without pump pressure the lean amine would
+        // enter the absorber at a far lower pressure than the gas, making the
+        // column material balance physically inconsistent.
+        //
+        // DeltaP = 3 400 000 Pa brings the lean amine from ~1 atm up to ~35 bar,
+        // matching the absorber operating pressure.
+        // -----------------------------------------------------------------------
+        ((dynamic)leanPump).DeltaP = 3_400_000.0; // Pa (~3.4 MPa pump head)
 
         // Baseline feed specs (SI). Equivalent of P/T/flow sanity check.
         ((dynamic)feed).SetTemperature(313.15);
