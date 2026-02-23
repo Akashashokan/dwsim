@@ -154,12 +154,38 @@ public static class AcidGasRemovalDynamicTemplate
         // --- Absorber ---
         // Gas (absFeed) enters at the BOTTOM stage; lean amine (recycleToAbs)
         // enters at the TOP stage (stage 0).  Treated gas exits at the top
-        // (ConnectDistillate → Behavior.Distillate), rich liquid exits at the
+        // (ConnectTopProduct → Behavior.Distillate), rich liquid exits at the
         // bottom (ConnectBottoms → Behavior.BottomsLiquid).
-        int absNs = ((dynamic)absorber).Stages.Count - 1; // index of last (bottom) stage
-        ((dynamic)absorber).ConnectFeed(absFeed, absNs);      // gas at bottom stage
-        ((dynamic)absorber).ConnectFeed(recycleToAbs, 0);     // lean amine at top stage
-        ((dynamic)absorber).ConnectTopProduct(hotRichGas);    // treated gas exits top (AbsorptionColumn API)
+        //
+        // CRITICAL: SetNumberOfStages MUST be called before ConnectFeed.
+        // SetNumberOfStages(6) on the default 12-stage column calls
+        // Stages.RemoveRange(5, 6), which removes the current "mid" stages and
+        // keeps the BottomStage object (formerly at index 11) as the new index 5.
+        // If ConnectFeed runs first, it stores AssociatedStage = 11 in
+        // MaterialStreams.  After stage removal that index no longer exists, so
+        // GetSolverInputData finds no feed on the last stage (FT.Last = 0) and
+        // the Naphtali-Sandholm solver either throws "needs a feed on last stage"
+        // or silently diverges with a large objective (~2000).
+        //
+        // Stabilization choices:
+        //   • 6 stages: smaller Jacobian, simpler starting point for NR.
+        //   • Pressure = 3.5 MPa on every stage: K-values are physically valid
+        //     at 35 bar / ~313 K; the default 1 atm gives near-zero K-values
+        //     and a near-singular Jacobian.
+        //   • Efficiency = 1.0: ideal stages eliminate the efficiency
+        //     sub-iteration on the first convergence attempt.
+        ((dynamic)absorber).SetNumberOfStages(6);
+        var absStages = ((dynamic)absorber).Stages;
+        for (int k = 0; k < absStages.Count; k++)
+        {
+            absStages[k].P = 3_500_000.0; // 35 bar — matches feed gas pressure
+            absStages[k].Efficiency = 1.0;
+        }
+
+        int absNs = ((dynamic)absorber).Stages.Count - 1; // 5 for 6 stages
+        ((dynamic)absorber).ConnectFeed(absFeed, absNs);      // gas at bottom stage (5)
+        ((dynamic)absorber).ConnectFeed(recycleToAbs, 0);     // lean amine at top stage (0)
+        ((dynamic)absorber).ConnectTopProduct(hotRichGas);    // treated gas exits top
         ((dynamic)absorber).ConnectBottoms(richAmine);        // rich amine exits bottom
 
         // --- Three-stage regeneration cascade ---
@@ -252,17 +278,21 @@ public static class AcidGasRemovalDynamicTemplate
         // -----------------------------------------------------------------------
 
         // Gas path → Peng-Robinson.
+        // recycleToAbs and richAmine are absorber border streams: they MUST use
+        // the same package as the column (PR) or the Naphtali-Sandholm solver
+        // sees inconsistent K-values between the column flash and the stream
+        // flash and diverges with a large residual (~2000).
         foreach (var obj in new ISimulationObject[] {
             feed, saturationMixer, saturatedFeed, feedSeparator,
             absFeed, absorber, hotRichGas, richCooler, coolRichGas,
-            salesSeparator, salesGas, feedSepLiquid, salesSepLiquid })
+            salesSeparator, salesGas, feedSepLiquid, salesSepLiquid,
+            recycleToAbs, richAmine })
         {
             ((dynamic)obj).PropertyPackage = gasPPc;
         }
 
         // Amine loop → Amines / Electrolyte package.
         foreach (var obj in new ISimulationObject[] {
-            recycleToAbs, richAmine,
             regenerator1, regenerator2, regenerator3,
             leanAmine, leanPump, pumpedLeanAmine,
             leanSaturator, leanToAbs, amineRecycle,
@@ -307,10 +337,16 @@ public static class AcidGasRemovalDynamicTemplate
         // would all land in the stream if all three were added) and including
         // dissolved acid gases gives the electrolyte solver an inconsistent
         // liquid-phase enthalpy target on the very first iteration.
+        // Under Peng-Robinson (used for the absorber) a high amine concentration
+        // produces large liquid-phase fugacity corrections that make the K-values
+        // unstable on the first NR iteration.  Start with a dilute amine seed
+        // (5 mol%) so PR K-values are dominated by the water/gas interactions
+        // where PR is well-parameterised.  The Recycle block will drive this
+        // toward the true steady-state value over successive iterations.
         ApplyComposition(recycleToAbs, new Dictionary<string, double>
         {
-            ["Water"]  = 0.70,
-            [amineName] = 0.30,
+            ["Water"]   = 0.95,
+            [amineName] = 0.05,
         });
 
         // Dynamic setup: one integrator + one schedule.
