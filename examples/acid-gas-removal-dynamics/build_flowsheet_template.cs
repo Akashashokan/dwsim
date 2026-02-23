@@ -158,34 +158,37 @@ public static class AcidGasRemovalDynamicTemplate
         // bottom (ConnectBottoms → Behavior.BottomsLiquid).
         //
         // CRITICAL ordering: SetNumberOfStages MUST run before ConnectFeed.
-        // SetNumberOfStages(6) calls Stages.RemoveRange(5, 6) on the default
-        // 12-stage column; it removes "mid" stages and keeps BottomStage
-        // (formerly index 11) as the new index 5.  ConnectFeed stores
-        // AssociatedStage as an integer index — if feeds are connected first,
-        // they store index 11, which is out of range after resize.
-        // GetSolverInputData then finds FT.Last = 0 and throws.
+        // ConnectFeed stores AssociatedStage as an integer index.  If feeds
+        // are connected before resize, they reference the pre-resize index
+        // (e.g. 11 for 12 stages) which no longer exists after resize.
         //
         // Feed stage constraints (AbsorptionColumn, GetSolverInputData:3264):
         //   FT.First (stage 0) must be non-zero  → a feed MUST be on stage 0
         //   FT.Last  (stage ns) must be non-zero → a feed MUST be on stage ns
-        // Both checks are hard throws; there is NO flexibility on stage indices.
         //
-        // Pressure profile: use SetTopPressure + ColumnPressureDrop rather
-        // than manually patching absStages[k].P.  GetSolverInputData applies
-        // ColumnPressureDrop as a linear profile (Stages(i).P = Stages(0).P +
-        // i/ns * ColumnPressureDrop), which is authoritative and will not be
-        // silently overwritten by propagation before the solve.
-        ((dynamic)absorber).SetNumberOfStages(6);
+        // Solver: BurninghamOtto (Sum-Rates) is specifically designed for
+        // absorbers.  NaphtaliSandholm (the default fallback) solves ALL MESH
+        // equations simultaneously in one Jacobian, which is ill-conditioned
+        // for systems with wide volatility ranges (K_CH4 > 10, K_H2S < 1).
+        // Sum-Rates decouples composition (tridiagonal matrix) from temperature
+        // (NR on energy balance) and has built-in damping + a two-pass retry
+        // with relaxation (Column.Calculate lines 4897-4910).
+        //
+        // Stages: 4 is the minimum SetNumberOfStages allows (throws if n ≤ 3).
+        // Start with the smallest possible system; increase once converged.
+        ((dynamic)absorber).SetNumberOfStages(4);
         ((dynamic)absorber).SetTopPressure(3_500_000.0);   // stage 0 = 35 bar
         ((dynamic)absorber).ColumnPressureDrop = 20_000.0; // 0.2 bar top→bottom
+        ((dynamic)absorber).SolvingMethodName = "Sum-Rates (Burningham-Otto)";
+        ((dynamic)absorber).MaxIterations = 300;
         // Efficiencies still require a manual loop (no column-level API).
         var absStages = ((dynamic)absorber).Stages;
         for (int k = 0; k < absStages.Count; k++)
             absStages[k].Efficiency = 1.0;
 
-        int absNs = ((dynamic)absorber).Stages.Count - 1; // 5 for 6 stages
-        ((dynamic)absorber).ConnectFeed(absFeed, absNs);   // gas at stage 5 (LAST — required)
-        ((dynamic)absorber).ConnectFeed(recycleToAbs, 0);  // lean amine at stage 0 (FIRST — required)
+        int absNs = ((dynamic)absorber).Stages.Count - 1; // 3 for 4 stages
+        ((dynamic)absorber).ConnectFeed(absFeed, absNs);   // gas at last stage (REQUIRED)
+        ((dynamic)absorber).ConnectFeed(recycleToAbs, 0);  // lean amine at stage 0 (REQUIRED)
         ((dynamic)absorber).ConnectTopProduct(hotRichGas);  // treated gas exits top
         ((dynamic)absorber).ConnectBottoms(richAmine);      // rich amine exits bottom
 
@@ -250,10 +253,13 @@ public static class AcidGasRemovalDynamicTemplate
         // -----------------------------------------------------------------------
         ((dynamic)regenerator1).SetCondenserSpec("Reflux Ratio", 1.0, "");
         ((dynamic)regenerator1).SetReboilerSpec("Boilup Ratio", 1.0, "");
+        ((dynamic)regenerator1).MaxIterations = 300;
         ((dynamic)regenerator2).SetCondenserSpec("Reflux Ratio", 1.0, "");
         ((dynamic)regenerator2).SetReboilerSpec("Boilup Ratio", 1.0, "");
+        ((dynamic)regenerator2).MaxIterations = 300;
         ((dynamic)regenerator3).SetCondenserSpec("Reflux Ratio", 1.0, "");
         ((dynamic)regenerator3).SetReboilerSpec("Boilup Ratio", 1.0, "");
+        ((dynamic)regenerator3).MaxIterations = 300;
 
         // -----------------------------------------------------------------------
         // Amine recirculation pump: set a pressure rise to match absorber inlet.
@@ -342,16 +348,37 @@ public static class AcidGasRemovalDynamicTemplate
         // -----------------------------------------------------------------------
         ((dynamic)saturatedFeed).SetTemperature(313.15);
         ((dynamic)saturatedFeed).SetPressure(3_500_000.0);
+        ((dynamic)saturatedFeed).SetMassFlow(2.0);
+        ApplyComposition(saturatedFeed, new Dictionary<string, double>
+        {
+            ["Methane"]            = 0.850,
+            ["Carbon dioxide"]     = 0.080,
+            ["Hydrogen sulfide"]   = 0.030,
+            ["Water"]              = 0.020,
+            ["Nitrogen"]           = 0.010,
+            ["Ethane"]             = 0.005,
+            ["Propane"]            = 0.002,
+        });
         ((dynamic)absFeed).SetTemperature(313.15);
         ((dynamic)absFeed).SetPressure(3_500_000.0);
+        ((dynamic)absFeed).SetMassFlow(2.0);
+        // Seed absFeed with the same gas composition as the raw feed.
+        // GetSolverInputData reads F(lastF) = stream.molarflow and
+        // fc[][]/z[][] = stream.MoleFraction for all stages.  If these
+        // are zero (upstream hasn't propagated yet), V(i) = F(lastF) = 0
+        // for every stage → solver has no starting point.  These seeds are
+        // overwritten by the upstream separator calculation if it succeeds.
+        ApplyComposition(absFeed, new Dictionary<string, double>
+        {
+            ["Methane"]            = 0.850,
+            ["Carbon dioxide"]     = 0.080,
+            ["Hydrogen sulfide"]   = 0.030,
+            ["Water"]              = 0.020,
+            ["Nitrogen"]           = 0.010,
+            ["Ethane"]             = 0.005,
+            ["Propane"]            = 0.002,
+        });
         ((dynamic)feedSepLiquid).SetPressure(3_500_000.0);
-        // Do NOT set feedSeparator.OverrideP = true:
-        // OverrideP forces CalculationMode = Legacy (Vessel.vb:678), and
-        // Legacy+OverrideP checks for an energy stream on connector 6
-        // (Vessel.vb:825) — throwing "EnergyStreamRequired" when none exists.
-        // In the default Legacy mode WITHOUT OverrideP the vessel reads its
-        // flash pressure from the inlet stream (P = MixedStream.pressure),
-        // which is already 3.5 MPa via saturatedFeed.SetPressure above.
 
         // Seed the lean-amine recycle tear stream with a physically meaningful
         // initial guess so the absorber solver has a valid starting point on the
