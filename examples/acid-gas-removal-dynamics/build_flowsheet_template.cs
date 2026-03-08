@@ -115,11 +115,19 @@ public static class AcidGasRemovalDynamicTemplate
         var hotLeanAmine   = sim.AddObject(ObjectType.MaterialStream,   1070,  380, "Hot lean amine");
 
         // Lean amine recirculation
+        // leanSeparator: flash vessel between the cooler and the pump.
+        // After cooling to 40 °C at 35 bar, residual dissolved CO2/H2S can form
+        // a small vapour fraction that would trigger "vapor phase detected at pump
+        // inlet".  The separator routes that vapour to a vent sink and feeds only
+        // the liquid phase to the pump.
         var leanCooler     = sim.AddObject(ObjectType.Cooler,           1180,  380, "Lean amine cooler");
         var coolLeanAmine  = sim.AddObject(ObjectType.MaterialStream,   1300,  380, "Cooled lean amine");
-        var leanPump       = sim.AddObject(ObjectType.Pump,             1400,  380, "Lean amine pump");
-        var pumpedLeanAmine= sim.AddObject(ObjectType.MaterialStream,   1520,  380, "Pumped lean amine");
-        var amineRecycle   = sim.AddObject(ObjectType.OT_Recycle,       1620,  380, "Amine recycle");
+        var leanSeparator  = sim.AddObject(ObjectType.Vessel,           1400,  380, "Lean amine sep.");
+        var leanSepVapor   = sim.AddObject(ObjectType.MaterialStream,   1400,  280, "Lean sep. vent");
+        var leanSepLiquid  = sim.AddObject(ObjectType.MaterialStream,   1520,  380, "Liquid lean amine");
+        var leanPump       = sim.AddObject(ObjectType.Pump,             1620,  380, "Lean amine pump");
+        var pumpedLeanAmine= sim.AddObject(ObjectType.MaterialStream,   1740,  380, "Pumped lean amine");
+        var amineRecycle   = sim.AddObject(ObjectType.OT_Recycle,       1840,  380, "Amine recycle");
         var recycleToAbs   = sim.AddObject(ObjectType.MaterialStream,    610,  330, "Lean amine (recycle)");
 
         foreach (var o in sim.SimulationObjects.Values)
@@ -163,7 +171,10 @@ public static class AcidGasRemovalDynamicTemplate
         // Lean amine recirculation
         sim.ConnectObjects(hotLeanAmine.GraphicObject,   leanCooler.GraphicObject,      0, 0);
         sim.ConnectObjects(leanCooler.GraphicObject,     coolLeanAmine.GraphicObject,   0, 0);
-        sim.ConnectObjects(coolLeanAmine.GraphicObject,  leanPump.GraphicObject,        0, 0);
+        sim.ConnectObjects(coolLeanAmine.GraphicObject,  leanSeparator.GraphicObject,   0, 0);
+        sim.ConnectObjects(leanSeparator.GraphicObject,  leanSepVapor.GraphicObject,    0, 0); // vapor vent
+        sim.ConnectObjects(leanSeparator.GraphicObject,  leanSepLiquid.GraphicObject,   1, 0); // liquid only
+        sim.ConnectObjects(leanSepLiquid.GraphicObject,  leanPump.GraphicObject,        0, 0);
         sim.ConnectObjects(leanPump.GraphicObject,       pumpedLeanAmine.GraphicObject, 0, 0);
         sim.ConnectObjects(pumpedLeanAmine.GraphicObject,amineRecycle.GraphicObject,    0, 0);
         sim.ConnectObjects(amineRecycle.GraphicObject,   recycleToAbs.GraphicObject,    0, 0);
@@ -179,7 +190,9 @@ public static class AcidGasRemovalDynamicTemplate
             richCooler, coolRichGas, salesSeparator, salesGas, salesSepLiquid,
             richMixer, richAmine,
             regenHeater, hotRichAmine, regenFlash, acidicGas, hotLeanAmine,
-            leanCooler, coolLeanAmine, leanPump, pumpedLeanAmine,
+            leanCooler, coolLeanAmine,
+            leanSeparator, leanSepVapor, leanSepLiquid,
+            leanPump, pumpedLeanAmine,
             amineRecycle, recycleToAbs })
         {
             try { ((dynamic)obj).PropertyPackage = ppc; } catch { }
