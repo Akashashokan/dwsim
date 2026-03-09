@@ -290,17 +290,27 @@ public static class AcidGasRemovalDynamicTemplate
         ((dynamic)feedSepLiquid).SetPressure(3_500_000.0);
 
         // Lean amine recycle tear-stream seed.
-        // ~40 wt% MDEA in water ≈ x_amine = 0.09 mol/mol (molar basis).
-        // Starting with a physically plausible amine concentration avoids
-        // a near-pure-water stream that would give an almost empty absorbedComps
-        // stream on the first iteration and prevent the recycle from converging.
+        // Lean amine recycle seeded as pure water.
+        //
+        // PR requires Tc, Pc and ω for every compound.  MDEA (and many other
+        // amines) frequently has missing or poorly fitted PR critical parameters
+        // in the DWSIM database, causing DW_CalcEnthalpy to return NaN for any
+        // stream that contains amine.  That NaN propagates through
+        //   regenFlash → hotLeanAmine → leanCooler → coolLeanAmine
+        //   → leanSeparator → leanSepLiquid
+        // and the pump throws "enthalpy = NaN" when it validates its inlet.
+        //
+        // In this surrogate flowsheet the ComponentSeparator already fixes the
+        // acid-gas recovery fractions, so the lean solvent thermodynamics do not
+        // affect correctness.  Using pure water keeps every PR flash
+        // well-conditioned.  The amine compound remains in the component list for
+        // bookkeeping but carries zero flow in the recycle loop.
         ((dynamic)recycleToAbs).SetTemperature(313.15);
         ((dynamic)recycleToAbs).SetPressure(3_500_000.0);
         ((dynamic)recycleToAbs).SetMassFlow(10.0);
         ApplyComposition(recycleToAbs, new Dictionary<string, double>
         {
-            ["Water"]   = 0.91,
-            [amineName] = 0.09,
+            ["Water"] = 1.0,
         });
 
         // -----------------------------------------------------------------------
