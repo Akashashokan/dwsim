@@ -86,10 +86,11 @@ public static class AcidGasRemovalDynamicTemplate
         // -----------------------------------------------------------------------
 
         // Feed path
-        var feed           = sim.AddObject(ObjectType.MaterialStream,     40,  200, "Feed");
-        var feedSeparator  = sim.AddObject(ObjectType.Vessel,            160,  200, "Feed water sep.");
-        var feedSepLiquid  = sim.AddObject(ObjectType.MaterialStream,    160,  310, "Feed sep. water");
-        var absFeed        = sim.AddObject(ObjectType.MaterialStream,    280,  180, "Dry feed gas");
+        var feed            = sim.AddObject(ObjectType.MaterialStream,    40,  200, "Feed");
+        var feedSeparator   = sim.AddObject(ObjectType.Vessel,           160,  200, "Feed water sep.");
+        var feedSepLiquid   = sim.AddObject(ObjectType.MaterialStream,   160,  310, "Feed sep. water");
+        var feedSepLiquid2  = sim.AddObject(ObjectType.MaterialStream,   160,  360, "Feed sep. liquid 2"); // Vessel connector 2
+        var absFeed         = sim.AddObject(ObjectType.MaterialStream,   280,  180, "Dry feed gas");
 
         // Absorber surrogate
         var absorberSurr   = sim.AddObject(ObjectType.ComponentSeparator,380,  200, "ABSORBER SURROGATE");
@@ -97,11 +98,12 @@ public static class AcidGasRemovalDynamicTemplate
         var absorbedComps  = sim.AddObject(ObjectType.MaterialStream,    500,  260, "Absorbed acid comps");
 
         // Sales gas path
-        var richCooler     = sim.AddObject(ObjectType.Cooler,            610,  150, "Gas-gas HX");
-        var coolRichGas    = sim.AddObject(ObjectType.MaterialStream,    730,  150, "Cooled sweet gas");
-        var salesSeparator = sim.AddObject(ObjectType.Vessel,            840,  150, "Sales gas water sep");
-        var salesGas       = sim.AddObject(ObjectType.MaterialStream,    960,  130, "Sales gas");
-        var salesSepLiquid = sim.AddObject(ObjectType.MaterialStream,    840,  260, "Sales gas condensate");
+        var richCooler      = sim.AddObject(ObjectType.Cooler,           610,  150, "Gas-gas HX");
+        var coolRichGas     = sim.AddObject(ObjectType.MaterialStream,   730,  150, "Cooled sweet gas");
+        var salesSeparator  = sim.AddObject(ObjectType.Vessel,           840,  150, "Sales gas water sep");
+        var salesGas        = sim.AddObject(ObjectType.MaterialStream,   960,  130, "Sales gas");
+        var salesSepLiquid  = sim.AddObject(ObjectType.MaterialStream,   840,  260, "Sales gas condensate");
+        var salesSepLiquid2 = sim.AddObject(ObjectType.MaterialStream,   840,  310, "Sales gas liquid 2"); // Vessel connector 2
 
         // Rich amine: mix absorbed components with lean amine recycle
         var richMixer      = sim.AddObject(ObjectType.Mixer,             610,  270, "Rich amine mixer");
@@ -110,9 +112,10 @@ public static class AcidGasRemovalDynamicTemplate
         // Regeneration surrogate: Heater + Flash
         var regenHeater    = sim.AddObject(ObjectType.Heater,            840,  270, "Regen heater");
         var hotRichAmine   = sim.AddObject(ObjectType.MaterialStream,    960,  270, "Hot rich amine");
-        var regenFlash     = sim.AddObject(ObjectType.Vessel,           1070,  270, "Regen flash sep.");
-        var acidicGas      = sim.AddObject(ObjectType.MaterialStream,   1070,  160, "Acid gas product");
-        var hotLeanAmine   = sim.AddObject(ObjectType.MaterialStream,   1070,  380, "Hot lean amine");
+        var regenFlash      = sim.AddObject(ObjectType.Vessel,          1070,  270, "Regen flash sep.");
+        var acidicGas       = sim.AddObject(ObjectType.MaterialStream,  1070,  160, "Acid gas product");
+        var hotLeanAmine    = sim.AddObject(ObjectType.MaterialStream,  1070,  380, "Hot lean amine");
+        var regenFlashLiq2  = sim.AddObject(ObjectType.MaterialStream,  1070,  430, "Regen flash liquid 2"); // Vessel connector 2
 
         // Lean amine recirculation
         // leanSeparator: flash vessel between the cooler and the pump.
@@ -122,9 +125,10 @@ public static class AcidGasRemovalDynamicTemplate
         // the liquid phase to the pump.
         var leanCooler     = sim.AddObject(ObjectType.Cooler,           1180,  380, "Lean amine cooler");
         var coolLeanAmine  = sim.AddObject(ObjectType.MaterialStream,   1300,  380, "Cooled lean amine");
-        var leanSeparator  = sim.AddObject(ObjectType.Vessel,           1400,  380, "Lean amine sep.");
-        var leanSepVapor   = sim.AddObject(ObjectType.MaterialStream,   1400,  280, "Lean sep. vent");
-        var leanSepLiquid  = sim.AddObject(ObjectType.MaterialStream,   1520,  380, "Liquid lean amine");
+        var leanSeparator   = sim.AddObject(ObjectType.Vessel,          1400,  380, "Lean amine sep.");
+        var leanSepVapor    = sim.AddObject(ObjectType.MaterialStream,  1400,  280, "Lean sep. vent");
+        var leanSepLiquid   = sim.AddObject(ObjectType.MaterialStream,  1520,  380, "Liquid lean amine");
+        var leanSepLiquid2  = sim.AddObject(ObjectType.MaterialStream,  1400,  460, "Lean sep. liquid 2"); // Vessel connector 2
         var leanPump       = sim.AddObject(ObjectType.Pump,             1620,  380, "Lean amine pump");
         var pumpedLeanAmine= sim.AddObject(ObjectType.MaterialStream,   1740,  380, "Pumped lean amine");
         var amineRecycle   = sim.AddObject(ObjectType.OT_Recycle,       1840,  380, "Amine recycle");
@@ -138,9 +142,10 @@ public static class AcidGasRemovalDynamicTemplate
         // -----------------------------------------------------------------------
 
         // Feed path
-        sim.ConnectObjects(feed.GraphicObject,           feedSeparator.GraphicObject,   0, 0);
-        sim.ConnectObjects(feedSeparator.GraphicObject,  absFeed.GraphicObject,         0, 0); // vapor top
-        sim.ConnectObjects(feedSeparator.GraphicObject,  feedSepLiquid.GraphicObject,   1, 0); // liquid bottom
+        sim.ConnectObjects(feed.GraphicObject,            feedSeparator.GraphicObject,   0, 0);
+        sim.ConnectObjects(feedSeparator.GraphicObject,   absFeed.GraphicObject,         0, 0); // vapor
+        sim.ConnectObjects(feedSeparator.GraphicObject,   feedSepLiquid.GraphicObject,   1, 0); // liquid 1
+        sim.ConnectObjects(feedSeparator.GraphicObject,   feedSepLiquid2.GraphicObject,  2, 0); // liquid 2 (three-phase guard)
 
         // Absorber surrogate
         // OutputConnector(0) = outstr1 = sweetGas
@@ -153,8 +158,9 @@ public static class AcidGasRemovalDynamicTemplate
         sim.ConnectObjects(sweetGas.GraphicObject,       richCooler.GraphicObject,      0, 0);
         sim.ConnectObjects(richCooler.GraphicObject,     coolRichGas.GraphicObject,     0, 0);
         sim.ConnectObjects(coolRichGas.GraphicObject,    salesSeparator.GraphicObject,  0, 0);
-        sim.ConnectObjects(salesSeparator.GraphicObject, salesGas.GraphicObject,        0, 0);
-        sim.ConnectObjects(salesSeparator.GraphicObject, salesSepLiquid.GraphicObject,  1, 0);
+        sim.ConnectObjects(salesSeparator.GraphicObject,  salesGas.GraphicObject,        0, 0);
+        sim.ConnectObjects(salesSeparator.GraphicObject,  salesSepLiquid.GraphicObject,  1, 0); // liquid 1
+        sim.ConnectObjects(salesSeparator.GraphicObject,  salesSepLiquid2.GraphicObject, 2, 0); // liquid 2 (three-phase guard)
 
         // Rich amine formation: absorbed comps + lean amine recycle → rich amine
         sim.ConnectObjects(absorbedComps.GraphicObject,  richMixer.GraphicObject,       0, 0); // mixer input 0
@@ -165,15 +171,17 @@ public static class AcidGasRemovalDynamicTemplate
         sim.ConnectObjects(richAmine.GraphicObject,      regenHeater.GraphicObject,     0, 0);
         sim.ConnectObjects(regenHeater.GraphicObject,    hotRichAmine.GraphicObject,    0, 0);
         sim.ConnectObjects(hotRichAmine.GraphicObject,   regenFlash.GraphicObject,      0, 0);
-        sim.ConnectObjects(regenFlash.GraphicObject,     acidicGas.GraphicObject,       0, 0); // vapor
-        sim.ConnectObjects(regenFlash.GraphicObject,     hotLeanAmine.GraphicObject,    1, 0); // liquid
+        sim.ConnectObjects(regenFlash.GraphicObject,      acidicGas.GraphicObject,       0, 0); // vapor
+        sim.ConnectObjects(regenFlash.GraphicObject,      hotLeanAmine.GraphicObject,    1, 0); // liquid 1
+        sim.ConnectObjects(regenFlash.GraphicObject,      regenFlashLiq2.GraphicObject,  2, 0); // liquid 2 (three-phase guard)
 
         // Lean amine recirculation
         sim.ConnectObjects(hotLeanAmine.GraphicObject,   leanCooler.GraphicObject,      0, 0);
         sim.ConnectObjects(leanCooler.GraphicObject,     coolLeanAmine.GraphicObject,   0, 0);
         sim.ConnectObjects(coolLeanAmine.GraphicObject,  leanSeparator.GraphicObject,   0, 0);
-        sim.ConnectObjects(leanSeparator.GraphicObject,  leanSepVapor.GraphicObject,    0, 0); // vapor vent
-        sim.ConnectObjects(leanSeparator.GraphicObject,  leanSepLiquid.GraphicObject,   1, 0); // liquid only
+        sim.ConnectObjects(leanSeparator.GraphicObject,   leanSepVapor.GraphicObject,    0, 0); // vapor vent
+        sim.ConnectObjects(leanSeparator.GraphicObject,   leanSepLiquid.GraphicObject,   1, 0); // liquid 1
+        sim.ConnectObjects(leanSeparator.GraphicObject,   leanSepLiquid2.GraphicObject,  2, 0); // liquid 2 (three-phase guard)
         sim.ConnectObjects(leanSepLiquid.GraphicObject,  leanPump.GraphicObject,        0, 0);
         sim.ConnectObjects(leanPump.GraphicObject,       pumpedLeanAmine.GraphicObject, 0, 0);
         sim.ConnectObjects(pumpedLeanAmine.GraphicObject,amineRecycle.GraphicObject,    0, 0);
@@ -185,13 +193,13 @@ public static class AcidGasRemovalDynamicTemplate
         // objects are not skipped if one assignment fails.
         // -----------------------------------------------------------------------
         foreach (var obj in new ISimulationObject[] {
-            feed, feedSeparator, feedSepLiquid, absFeed,
+            feed, feedSeparator, feedSepLiquid, feedSepLiquid2, absFeed,
             absorberSurr, sweetGas, absorbedComps,
-            richCooler, coolRichGas, salesSeparator, salesGas, salesSepLiquid,
+            richCooler, coolRichGas, salesSeparator, salesGas, salesSepLiquid, salesSepLiquid2,
             richMixer, richAmine,
-            regenHeater, hotRichAmine, regenFlash, acidicGas, hotLeanAmine,
+            regenHeater, hotRichAmine, regenFlash, acidicGas, hotLeanAmine, regenFlashLiq2,
             leanCooler, coolLeanAmine,
-            leanSeparator, leanSepVapor, leanSepLiquid,
+            leanSeparator, leanSepVapor, leanSepLiquid, leanSepLiquid2,
             leanPump, pumpedLeanAmine,
             amineRecycle, recycleToAbs })
         {
