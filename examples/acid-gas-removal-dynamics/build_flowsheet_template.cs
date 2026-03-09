@@ -14,31 +14,28 @@ using DWSIM.Thermodynamics.PropertyPackages;
 
 // Acid gas removal surrogate flowsheet.
 //
-// Design philosophy (replaces the previous rigorous AbsorptionColumn approach):
-//
+// Design philosophy:
 //   Absorber surrogate  — ComponentSeparator with fixed molar-recovery splits.
-//                         Avoids all Sum-Rates / Naphtali-Sandholm convergence
-//                         issues while preserving the correct process topology.
+//   Regenerator surrogate — Heater (120 °C) + pressure-letdown Valve (1.5 bar)
+//                           + Flash Vessel + Pump (back to 35 bar).
+//   Property package    — single Peng-Robinson for all objects.
 //
-//   Regenerator surrogate — Heater (150 °C) + Flash Vessel.
-//                           At 35 bar / 150 °C, CO2 (Tc 304 K) and H2S (Tc 373 K)
-//                           are supercritical, K >> 1, so they flash to vapour;
-//                           water and amine remain liquid.  No pressure-reduction
-//                           valve is needed; regeneration at absorber pressure
-//                           also means no repressurisation pump head is needed.
-//
-//   Property package    — single Peng-Robinson instance for all objects.
-//                         Eliminates the electrolyte-flash divergence that occurred
-//                         when Amines/NRTL was assigned to the gas-side streams.
+// Regeneration at LOW pressure is intentional.
+//   Regenerating at absorber pressure (35 bar) keeps CO2/H2S more soluble in
+//   water under PR, producing a sour aqueous liquid whose enthalpy PR cannot
+//   evaluate reliably → NaN propagates to the pump inlet.
+//   At 1.5 bar / 120 °C CO2 and H2S leave cleanly in the flash; the remaining
+//   lean liquid is essentially pure water, which PR handles without issue.
 //
 // Flowsheet topology:
 //   Feed → FeedSep → DryFeedGas → AbsorberSurrogate ─(outlet 0)→ SweetGas
 //                                                    └(outlet 1)→ AbsorbedComps
-//   AbsorbedComps + LeanAmineRecycle → RichMixer → RichAmine
-//   RichAmine → RegenHeater → HotRichAmine → RegenFlash
+//   AbsorbedComps + LeanRecycle → RichMixer → RichAmine
+//   RichAmine → RegenHeater → HotRichAmine → RegenValve (→1.5 bar)
+//            → LowPRichAmine → RegenFlash
 //      ├─(vapor)→ AcidGasProduct
-//      └─(liq)→  HotLeanAmine → LeanCooler → CooledLeanAmine
-//                → LeanPump → PumpedLeanAmine → AmineRecycle → LeanAmineRecycle
+//      └─(liq)→  HotLeanAmine → LeanCooler (50 °C) → CooledLeanAmine
+//                → LeanSep → LeanPump (+33.5 bar) → Recycle
 //   SweetGas → GasGasHX → CooledSweetGas → SalesGasSep → SalesGas
 
 public static class AcidGasRemovalDynamicTemplate
@@ -59,14 +56,16 @@ public static class AcidGasRemovalDynamicTemplate
         AddCompoundIfAvailable(sim, "Ethane");
         AddCompoundIfAvailable(sim, "Propane");
 
-        var amineName = AddFirstAvailableCompound(sim, new[]
+        // Amine is optional: carries zero flow in the recycle loop (pure-water
+        // surrogate solvent) so its thermodynamic parameters never enter a PR
+        // flash.  If no amine is available in the database the flowsheet still
+        // builds and runs correctly.
+        AddFirstAvailableCompound(sim, new[]
         {
             "Methyl diethanolamine",
             "Monoethanolamine",
             "Diethanolamine"
         });
-        if (amineName == null)
-            throw new Exception("Could not add any amine compound (MDEA/MEA/DEA).");
 
         // -----------------------------------------------------------------------
         // Single Peng-Robinson property package for the whole flowsheet.
@@ -109,13 +108,18 @@ public static class AcidGasRemovalDynamicTemplate
         var richMixer      = sim.AddObject(ObjectType.Mixer,             610,  270, "Rich amine mixer");
         var richAmine      = sim.AddObject(ObjectType.MaterialStream,    730,  270, "Rich amine");
 
-        // Regeneration surrogate: Heater + Flash
+        // Regeneration surrogate: Heater → Valve (pressure letdown) → Flash
+        // The valve drops from absorber pressure (35 bar) to 1.5 bar so the flash
+        // strips CO2/H2S cleanly; the lean water exits at low pressure, well
+        // within the range where PR enthalpies are reliable.
         var regenHeater    = sim.AddObject(ObjectType.Heater,            840,  270, "Regen heater");
         var hotRichAmine   = sim.AddObject(ObjectType.MaterialStream,    960,  270, "Hot rich amine");
-        var regenFlash      = sim.AddObject(ObjectType.Vessel,          1070,  270, "Regen flash sep.");
-        var acidicGas       = sim.AddObject(ObjectType.MaterialStream,  1070,  160, "Acid gas product");
-        var hotLeanAmine    = sim.AddObject(ObjectType.MaterialStream,  1070,  380, "Hot lean amine");
-        var regenFlashLiq2  = sim.AddObject(ObjectType.MaterialStream,  1070,  430, "Regen flash liquid 2"); // Vessel connector 2
+        var regenValve     = sim.AddObject(ObjectType.Valve,            1010,  270, "Regen pressure valve");
+        var lowPRichAmine  = sim.AddObject(ObjectType.MaterialStream,   1060,  270, "Low-P rich amine");
+        var regenFlash     = sim.AddObject(ObjectType.Vessel,           1150,  270, "Regen flash sep.");
+        var acidicGas      = sim.AddObject(ObjectType.MaterialStream,   1150,  160, "Acid gas product");
+        var hotLeanAmine   = sim.AddObject(ObjectType.MaterialStream,   1150,  380, "Hot lean amine");
+        var regenFlashLiq2 = sim.AddObject(ObjectType.MaterialStream,   1150,  430, "Regen flash liquid 2"); // Vessel connector 2
 
         // Lean amine recirculation
         // leanSeparator: flash vessel between the cooler and the pump.
@@ -167,13 +171,15 @@ public static class AcidGasRemovalDynamicTemplate
         sim.ConnectObjects(recycleToAbs.GraphicObject,   richMixer.GraphicObject,       0, 1); // mixer input 1
         sim.ConnectObjects(richMixer.GraphicObject,      richAmine.GraphicObject,       0, 0);
 
-        // Regeneration
+        // Regeneration: heat → let down to 1.5 bar → flash
         sim.ConnectObjects(richAmine.GraphicObject,      regenHeater.GraphicObject,     0, 0);
         sim.ConnectObjects(regenHeater.GraphicObject,    hotRichAmine.GraphicObject,    0, 0);
-        sim.ConnectObjects(hotRichAmine.GraphicObject,   regenFlash.GraphicObject,      0, 0);
-        sim.ConnectObjects(regenFlash.GraphicObject,      acidicGas.GraphicObject,       0, 0); // vapor
-        sim.ConnectObjects(regenFlash.GraphicObject,      hotLeanAmine.GraphicObject,    1, 0); // liquid 1
-        sim.ConnectObjects(regenFlash.GraphicObject,      regenFlashLiq2.GraphicObject,  2, 0); // liquid 2 (three-phase guard)
+        sim.ConnectObjects(hotRichAmine.GraphicObject,   regenValve.GraphicObject,      0, 0);
+        sim.ConnectObjects(regenValve.GraphicObject,     lowPRichAmine.GraphicObject,   0, 0);
+        sim.ConnectObjects(lowPRichAmine.GraphicObject,  regenFlash.GraphicObject,      0, 0);
+        sim.ConnectObjects(regenFlash.GraphicObject,     acidicGas.GraphicObject,       0, 0); // vapor
+        sim.ConnectObjects(regenFlash.GraphicObject,     hotLeanAmine.GraphicObject,    1, 0); // liquid 1
+        sim.ConnectObjects(regenFlash.GraphicObject,     regenFlashLiq2.GraphicObject,  2, 0); // liquid 2 (three-phase guard)
 
         // Lean amine recirculation
         sim.ConnectObjects(hotLeanAmine.GraphicObject,   leanCooler.GraphicObject,      0, 0);
@@ -197,7 +203,8 @@ public static class AcidGasRemovalDynamicTemplate
             absorberSurr, sweetGas, absorbedComps,
             richCooler, coolRichGas, salesSeparator, salesGas, salesSepLiquid, salesSepLiquid2,
             richMixer, richAmine,
-            regenHeater, hotRichAmine, regenFlash, acidicGas, hotLeanAmine, regenFlashLiq2,
+            regenHeater, hotRichAmine, regenValve, lowPRichAmine,
+            regenFlash, acidicGas, hotLeanAmine, regenFlashLiq2,
             leanCooler, coolLeanAmine,
             leanSeparator, leanSepVapor, leanSepLiquid, leanSepLiquid2,
             leanPump, pumpedLeanAmine,
@@ -238,20 +245,28 @@ public static class AcidGasRemovalDynamicTemplate
         richCoolerCast.CalcMode = Cooler.CalculationMode.OutletTemperature;
         richCoolerCast.OutletTemperature = 305.15; // 32 °C
 
-        // Regeneration heater: raise temperature to strip CO2/H2S
-        // At 150 °C / 35 bar both CO2 and H2S are supercritical → K >> 1 → flash to vapour
+        // Regeneration heater: 120 °C is sufficient at 1.5 bar (CO2 bubble point
+        // ~0.7 bar, H2S ~1.0 bar at this temperature), and avoids the high-pressure
+        // sour-liquid enthalpy region where PR returns NaN.
         var regenHeaterCast = (Heater)(object)regenHeater;
         regenHeaterCast.CalcMode = Heater.CalculationMode.OutletTemperature;
-        regenHeaterCast.OutletTemperature = 423.15; // 150 °C
+        regenHeaterCast.OutletTemperature = 393.15; // 120 °C
 
-        // Lean amine cooler: return lean amine to absorber inlet temperature
+        // Pressure-letdown valve: drop from absorber pressure to regen pressure.
+        // Isenthalpic flash; outlet pressure drives the flash in regenFlash.
+        var regenValveCast = (Valve)(object)regenValve;
+        regenValveCast.CalcMode = Valve.CalculationMode.OutletPressure;
+        regenValveCast.OutletPressure = 150_000.0; // 1.5 bar
+
+        // Lean amine cooler: 50 °C avoids the near-bubble-point region that
+        // caused a small vapour fraction and downstream NaN at 40 °C / 1.5 bar.
         var leanCoolerCast = (Cooler)(object)leanCooler;
         leanCoolerCast.CalcMode = Cooler.CalculationMode.OutletTemperature;
-        leanCoolerCast.OutletTemperature = 313.15; // 40 °C
+        leanCoolerCast.OutletTemperature = 323.15; // 50 °C
 
-        // Lean amine pump: small DP for line-loss recovery (regeneration and
-        // absorber run at the same pressure, so no large head is required)
-        ((dynamic)leanPump).DeltaP = 50_000.0; // 0.5 bar
+        // Lean amine pump: must recover from regen pressure (1.5 bar) back to
+        // absorber pressure (35 bar) → ΔP ≈ 33.5 bar.
+        ((dynamic)leanPump).DeltaP = 3_350_000.0; // 33.5 bar
 
         // -----------------------------------------------------------------------
         // Stream initial conditions (SI units)
@@ -305,13 +320,21 @@ public static class AcidGasRemovalDynamicTemplate
         // affect correctness.  Using pure water keeps every PR flash
         // well-conditioned.  The amine compound remains in the component list for
         // bookkeeping but carries zero flow in the recycle loop.
-        ((dynamic)recycleToAbs).SetTemperature(313.15);
+        ((dynamic)recycleToAbs).SetTemperature(323.15);  // 50 °C matches cooler outlet
         ((dynamic)recycleToAbs).SetPressure(3_500_000.0);
         ((dynamic)recycleToAbs).SetMassFlow(10.0);
-        ApplyComposition(recycleToAbs, new Dictionary<string, double>
+        ApplyComposition(recycleToAbs, new Dictionary<string, double> { ["Water"] = 1.0 });
+
+        // Seed the three intermediate lean-loop streams with a valid pure-water
+        // state so the solver has a finite enthalpy on the first pass instead of
+        // letting a bad first-pass flash propagate NaN to the pump.
+        foreach (dynamic s in new object[] { hotLeanAmine, coolLeanAmine, leanSepLiquid })
         {
-            ["Water"] = 1.0,
-        });
+            s.SetTemperature(323.15);   // 50 °C — lean cooler outlet target
+            s.SetPressure(150_000.0);   // 1.5 bar — regen flash pressure
+            s.SetMassFlow(10.0);
+            ApplyComposition(s, new Dictionary<string, double> { ["Water"] = 1.0 });
+        }
 
         // -----------------------------------------------------------------------
         // Dynamic setup
