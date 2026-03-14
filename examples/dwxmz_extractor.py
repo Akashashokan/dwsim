@@ -24,7 +24,7 @@ import argparse
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from dataclasses import dataclass, field, asdict
-from typing import Optional
+from typing import Optional, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +94,8 @@ class SimulationObject:
     y: float = 0.0
     # Extra type-specific properties (key-value pairs)
     extra: dict = field(default_factory=dict)
+    # Full XML payload for this object (useful for Dynamic/CAPE-OPEN data)
+    raw_data: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -112,7 +114,8 @@ class EnergyStream(SimulationObject):
 
 @dataclass
 class UnitOperation(SimulationObject):
-    pass
+    cape_open_properties: dict = field(default_factory=dict)
+    dynamic_properties: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -189,6 +192,7 @@ class Simulation:
     energy_streams: list = field(default_factory=list)      # EnergyStream list
     unit_operations: list = field(default_factory=list)     # UnitOperation list
     connections: list = field(default_factory=list)         # Connection list
+    additional_sections: dict = field(default_factory=dict) # Unmapped root sections
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +231,60 @@ def _int(el: ET.Element, tag: str, default=0) -> int:
         return int(val)
     except (ValueError, TypeError):
         return default
+
+
+def element_to_dict(el: ET.Element) -> dict:
+    """Convert an XML element tree into a nested dict preserving attributes/repetitions."""
+    node: dict = {}
+
+    if el.attrib:
+        node["@attributes"] = dict(el.attrib)
+
+    text = (el.text or "").strip()
+    if text:
+        node["#text"] = text
+
+    children = list(el)
+    if children:
+        grouped = defaultdict(list)
+        for child in children:
+            grouped[child.tag].append(element_to_dict(child))
+
+        for tag, values in grouped.items():
+            node[tag] = values[0] if len(values) == 1 else values
+
+    return node
+
+
+def flatten_leaf_text(el: ET.Element, prefix: str = "") -> dict:
+    """Collect all leaf text nodes using slash-separated paths as keys."""
+    out = {}
+    path = f"{prefix}/{el.tag}" if prefix else el.tag
+    children = list(el)
+
+    if not children:
+        txt = (el.text or "").strip()
+        if txt:
+            out[path] = txt
+        return out
+
+    for child in children:
+        out.update(flatten_leaf_text(child, path))
+    return out
+
+
+CAPE_OPEN_KEYWORDS = ("capeopen", "cape-open", "cape_open", "icape")
+DYNAMIC_KEYWORDS = ("dynamic", "dynamics", "integrator", "timespan", "controller", "pid")
+
+
+def _filter_by_keywords(values: dict, keywords: Tuple[str, ...]) -> dict:
+    """Return only key/value pairs whose path contains one of the keywords."""
+    out = {}
+    for key, value in values.items():
+        key_lower = key.lower()
+        if any(k in key_lower for k in keywords):
+            out[key] = value
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +363,7 @@ def parse_material_stream(el: ET.Element) -> MaterialStream:
         composition_basis=_text(el, "CompositionBasis"),
         defined_flow=_text(el, "DefinedFlow"),
         force_phase=_text(el, "ForcePhase"),
+        raw_data=element_to_dict(el),
     )
     phases_el = el.find("Phases")
     if phases_el is not None:
@@ -323,6 +382,7 @@ def parse_energy_stream(el: ET.Element) -> EnergyStream:
         calculated=_bool(el, "Calculated"),
         active=_bool(el, "Active", default=True),
         energy_flow=_float(el, "EnergyFlow"),
+        raw_data=element_to_dict(el),
     )
 
 
@@ -376,12 +436,30 @@ def parse_unit_operation(el: ET.Element) -> UnitOperation:
         property_package=_text(el, "PropertyPackage"),
         calculated=_bool(el, "Calculated"),
         active=_bool(el, "Active", default=True),
+        raw_data=element_to_dict(el),
     )
     # Capture common UO-specific properties
     for prop in _COMMON_UO_PROPS:
         val = _text(el, prop)
         if val:
             uo.extra[prop] = val
+
+    # Capture *all* scalar leaf values (includes dynamic sim and CAPE-OPEN details
+    # whenever they are present in the XML payload).
+    known_core_fields = {
+        "ComponentName", "Name", "Type", "ObjectClass", "ComponentDescription",
+        "PropertyPackage", "Calculated", "Active",
+    }
+    leaf_values = flatten_leaf_text(el)
+    for key, value in leaf_values.items():
+        leaf_name = key.rsplit("/", 1)[-1]
+        if leaf_name in known_core_fields:
+            continue
+        uo.extra.setdefault(key, value)
+
+    # Explicitly expose CAPE-OPEN and Dynamic Simulation subsets.
+    uo.cape_open_properties = _filter_by_keywords(leaf_values, CAPE_OPEN_KEYWORDS)
+    uo.dynamic_properties = _filter_by_keywords(leaf_values, DYNAMIC_KEYWORDS)
     return uo
 
 
@@ -503,6 +581,14 @@ def extract(path: str) -> Simulation:
             sim.energy_streams.append(parse_energy_stream(obj_el))
         else:
             sim.unit_operations.append(parse_unit_operation(obj_el))
+
+    # --- Preserve any extra top-level sections not explicitly mapped above ---
+    mapped_sections = {
+        "GeneralInfo", "Compounds", "PropertyPackages", "SimulationObjects", "GraphicObjects"
+    }
+    for child in root:
+        if child.tag not in mapped_sections:
+            sim.additional_sections[child.tag] = element_to_dict(child)
 
     # --- Graphic Objects → positions + connections ---
     graphic_map: dict[str, GraphicObject] = {}
@@ -683,6 +769,7 @@ def to_json_dict(sim: Simulation) -> dict:
             "active": s.active,
             "position": {"x": s.x, "y": s.y},
             "phases": [phase_to_dict(p) for p in s.phases],
+            "raw_data": s.raw_data,
         }
 
     def energy_stream_to_dict(s: EnergyStream) -> dict:
@@ -696,6 +783,7 @@ def to_json_dict(sim: Simulation) -> dict:
             "calculated": s.calculated,
             "active": s.active,
             "position": {"x": s.x, "y": s.y},
+            "raw_data": s.raw_data,
         }
 
     def uo_to_dict(uo: UnitOperation) -> dict:
@@ -711,6 +799,9 @@ def to_json_dict(sim: Simulation) -> dict:
             "active": uo.active,
             "position": {"x": uo.x, "y": uo.y},
             "properties": uo.extra,
+            "cape_open_properties": uo.cape_open_properties,
+            "dynamic_properties": uo.dynamic_properties,
+            "raw_data": uo.raw_data,
         }
 
     def conn_to_dict(c: Connection) -> dict:
@@ -752,6 +843,7 @@ def to_json_dict(sim: Simulation) -> dict:
         "energy_streams":   [energy_stream_to_dict(s) for s in sim.energy_streams],
         "unit_operations":  [uo_to_dict(uo) for uo in sim.unit_operations],
         "connections":      [conn_to_dict(c) for c in sim.connections],
+        "additional_sections": sim.additional_sections,
         "summary": {
             "n_compounds":        len(sim.compounds),
             "n_property_packages": len(sim.property_packages),
