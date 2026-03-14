@@ -1,7 +1,3 @@
-#!/usr/bin/env python3
-"""
-DWSIM .dwxmz File Extractor
-============================
 Extracts simulation components, streams, connections, compounds,
 property packages, and thermodynamic properties from a .dwxmz file.
 
@@ -92,6 +88,99 @@ class SimulationObject:
     # Positional info from graphic object
     x: float = 0.0
     y: float = 0.0
+#!/usr/bin/env python3
+"""
+DWSIM .dwxmz File Extractor
+Extracts simulation components, streams, connections, compounds,
+property packages, and thermodynamic properties from a .dwxmz file.
+
+A .dwxmz file is a ZIP archive containing:
+  - <uuid>.xml  — all simulation object definitions
+  - <uuid>.db   — metadata SQLite database
+
+Usage:
+    python dwxmz_extractor.py <file.dwxmz> [--output json|text|summary]
+    python dwxmz_extractor.py <file.dwxmz> --output json > result.json
+
+Requirements:
+    Python 3.7+ (standard library only)
+"""
+
+import sys
+import json
+import zipfile
+import argparse
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+from dataclasses import dataclass, field, asdict
+from typing import Optional
+
+
+# ---------------------------------------------------------------------------
+# Data Classes
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Compound:
+    name: str
+    mole_fraction: float = 0.0
+    mass_fraction: float = 0.0
+    molar_flow: float = 0.0      # kmol/s
+    mass_flow: float = 0.0       # kg/s
+    volumetric_flow: float = 0.0 # m3/s
+    volumetric_fraction: float = 0.0
+    activity_coeff: float = 0.0
+    fugacity_coeff: float = 0.0
+
+
+@dataclass
+class PhaseProperties:
+    phase_id: int = 0
+    phase_name: str = ""
+    temperature: float = 0.0          # K
+    pressure: float = 0.0             # Pa
+    mass_flow: float = 0.0            # kg/s
+    molar_flow: float = 0.0           # kmol/s
+    volumetric_flow: float = 0.0      # m3/s
+    density: float = 0.0              # kg/m3
+    enthalpy: float = 0.0             # kJ/kg
+    entropy: float = 0.0              # kJ/(kg·K)
+    molar_enthalpy: float = 0.0       # kJ/kmol
+    molar_entropy: float = 0.0        # kJ/(kmol·K)
+    heat_capacity_cp: float = 0.0     # kJ/(kg·K)
+    heat_capacity_cv: float = 0.0     # kJ/(kg·K)
+    molecular_weight: float = 0.0     # kg/kmol
+    viscosity: float = 0.0            # Pa·s
+    thermal_conductivity: float = 0.0 # W/(m·K)
+    vapor_fraction: float = 0.0
+    compounds: list = field(default_factory=list)
+
+
+PHASE_NAMES = {
+    0: "Overall (Mixture)",
+    1: "Overall Liquid",
+    2: "Vapor",
+    3: "Liquid 1",
+    4: "Liquid 2",
+    5: "Liquid 3",
+    6: "Aqueous",
+    7: "Solid",
+}
+
+
+@dataclass
+class SimulationObject:
+    id: str
+    tag: str = ""
+    type: str = ""
+    object_class: str = ""
+    description: str = ""
+    property_package: str = ""
+    calculated: bool = False
+    active: bool = True
+    # Positional info from graphic object
+    x: float = 0.0
+    y: float = 0.0
     # Extra type-specific properties (key-value pairs)
     extra: dict = field(default_factory=dict)
     # Full XML payload for this object (useful for Dynamic/CAPE-OPEN data)
@@ -114,8 +203,7 @@ class EnergyStream(SimulationObject):
 
 @dataclass
 class UnitOperation(SimulationObject):
-    cape_open_properties: dict = field(default_factory=dict)
-    dynamic_properties: dict = field(default_factory=dict)
+    pass
 
 
 @dataclass
@@ -270,20 +358,6 @@ def flatten_leaf_text(el: ET.Element, prefix: str = "") -> dict:
 
     for child in children:
         out.update(flatten_leaf_text(child, path))
-    return out
-
-
-CAPE_OPEN_KEYWORDS = ("capeopen", "cape-open", "cape_open", "icape")
-DYNAMIC_KEYWORDS = ("dynamic", "dynamics", "integrator", "timespan", "controller", "pid")
-
-
-def _filter_by_keywords(values: dict, keywords: Tuple[str, ...]) -> dict:
-    """Return only key/value pairs whose path contains one of the keywords."""
-    out = {}
-    for key, value in values.items():
-        key_lower = key.lower()
-        if any(k in key_lower for k in keywords):
-            out[key] = value
     return out
 
 
@@ -450,16 +524,11 @@ def parse_unit_operation(el: ET.Element) -> UnitOperation:
         "ComponentName", "Name", "Type", "ObjectClass", "ComponentDescription",
         "PropertyPackage", "Calculated", "Active",
     }
-    leaf_values = flatten_leaf_text(el)
-    for key, value in leaf_values.items():
+    for key, value in flatten_leaf_text(el).items():
         leaf_name = key.rsplit("/", 1)[-1]
         if leaf_name in known_core_fields:
             continue
         uo.extra.setdefault(key, value)
-
-    # Explicitly expose CAPE-OPEN and Dynamic Simulation subsets.
-    uo.cape_open_properties = _filter_by_keywords(leaf_values, CAPE_OPEN_KEYWORDS)
-    uo.dynamic_properties = _filter_by_keywords(leaf_values, DYNAMIC_KEYWORDS)
     return uo
 
 
@@ -799,8 +868,6 @@ def to_json_dict(sim: Simulation) -> dict:
             "active": uo.active,
             "position": {"x": uo.x, "y": uo.y},
             "properties": uo.extra,
-            "cape_open_properties": uo.cape_open_properties,
-            "dynamic_properties": uo.dynamic_properties,
             "raw_data": uo.raw_data,
         }
 
