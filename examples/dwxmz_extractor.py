@@ -1,7 +1,96 @@
+Extracts simulation components, streams, connections, compounds,
+property packages, and thermodynamic properties from a .dwxmz file.
+
+A .dwxmz file is a ZIP archive containing:
+  - <uuid>.xml  — all simulation object definitions
+  - <uuid>.db   — metadata SQLite database
+
+Usage:
+    python dwxmz_extractor.py <file.dwxmz> [--output json|text|summary]
+    python dwxmz_extractor.py <file.dwxmz> --output json > result.json
+
+Requirements:
+    Python 3.7+ (standard library only)
+"""
+
+import sys
+import json
+import zipfile
+import argparse
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+from dataclasses import dataclass, field, asdict
+from typing import Optional, Tuple
+
+
+# ---------------------------------------------------------------------------
+# Data Classes
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Compound:
+    name: str
+    mole_fraction: float = 0.0
+    mass_fraction: float = 0.0
+    molar_flow: float = 0.0      # kmol/s
+    mass_flow: float = 0.0       # kg/s
+    volumetric_flow: float = 0.0 # m3/s
+    volumetric_fraction: float = 0.0
+    activity_coeff: float = 0.0
+    fugacity_coeff: float = 0.0
+
+
+@dataclass
+class PhaseProperties:
+    phase_id: int = 0
+    phase_name: str = ""
+    temperature: float = 0.0          # K
+    pressure: float = 0.0             # Pa
+    mass_flow: float = 0.0            # kg/s
+    molar_flow: float = 0.0           # kmol/s
+    volumetric_flow: float = 0.0      # m3/s
+    density: float = 0.0              # kg/m3
+    enthalpy: float = 0.0             # kJ/kg
+    entropy: float = 0.0              # kJ/(kg·K)
+    molar_enthalpy: float = 0.0       # kJ/kmol
+    molar_entropy: float = 0.0        # kJ/(kmol·K)
+    heat_capacity_cp: float = 0.0     # kJ/(kg·K)
+    heat_capacity_cv: float = 0.0     # kJ/(kg·K)
+    molecular_weight: float = 0.0     # kg/kmol
+    viscosity: float = 0.0            # Pa·s
+    thermal_conductivity: float = 0.0 # W/(m·K)
+    vapor_fraction: float = 0.0
+    compounds: list = field(default_factory=list)
+
+
+PHASE_NAMES = {
+    0: "Overall (Mixture)",
+    1: "Overall Liquid",
+    2: "Vapor",
+    3: "Liquid 1",
+    4: "Liquid 2",
+    5: "Liquid 3",
+    6: "Aqueous",
+    7: "Solid",
+}
+
+
+@dataclass
+class SimulationObject:
+    id: str
+    tag: str = ""
+    type: str = ""
+    object_class: str = ""
+    description: str = ""
+    property_package: str = ""
+    calculated: bool = False
+    active: bool = True
+    # Positional info from graphic object
+    x: float = 0.0
+    y: float = 0.0
 #!/usr/bin/env python3
 """
 DWSIM .dwxmz File Extractor
-============================
 Extracts simulation components, streams, connections, compounds,
 property packages, and thermodynamic properties from a .dwxmz file.
 
