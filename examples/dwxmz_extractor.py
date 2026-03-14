@@ -1,3 +1,4 @@
+"""
 Extracts simulation components, streams, connections, compounds,
 property packages, and thermodynamic properties from a .dwxmz file.
 
