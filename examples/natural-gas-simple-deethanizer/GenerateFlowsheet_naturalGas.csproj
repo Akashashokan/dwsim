@@ -54,7 +54,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="build_flowsheet_template.cs" />
+    <Compile Include="build_flowsheet_template_naturalGas.cs" />
     <Compile Include="Program.cs" />
   </ItemGroup>
   <ItemGroup>
